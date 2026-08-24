@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from wow_core import settings
+from wow_core.logging_setup import configure_server_logging
 from wow_core.chroma_store import query_similar
 from wow_core.claude_client import ask_across_videos
 from wow_core.db import get_videos_by_ids, init_db, list_channels, query_videos, set_watched, topic_trends
@@ -19,9 +20,12 @@ from wow_poller.pipeline import run_latest
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+configure_server_logging()
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    configure_server_logging()
     settings.ensure_data_dirs()
     init_db()
     yield
@@ -139,6 +143,21 @@ def api_watched(video_id: str, body: WatchedBody) -> dict[str, Any]:
 
 
 def main() -> None:
-    import uvicorn
+    import copy
 
-    uvicorn.run("wow_api.app:app", host="0.0.0.0", port=8000, reload=False)
+    import uvicorn
+    from uvicorn.config import LOGGING_CONFIG
+
+    log_config = copy.deepcopy(LOGGING_CONFIG)
+    for formatter in log_config["formatters"].values():
+        fmt = formatter.get("fmt")
+        if fmt and "%(asctime)s" not in fmt:
+            formatter["fmt"] = "%(asctime)s " + fmt
+
+    uvicorn.run(
+        "wow_api.app:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=False,
+        log_config=log_config,
+    )
