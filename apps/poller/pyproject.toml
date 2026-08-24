@@ -1,0 +1,19 @@
+[project]
+name = "wow-poller"
+version = "0.1.0"
+description = "Headless YouTube digest poller"
+requires-python = ">=3.12"
+dependencies = ["wow-core"]
+
+[project.scripts]
+wow-poll = "wow_poller.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wow_poller"]
+
+[tool.uv.sources]
+wow-core = { workspace = true }

@@ -1,0 +1,20 @@
+[project]
+name = "wow-youtube"
+version = "0.1.0"
+description = "Personal YouTube feed digest monorepo"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv.workspace]
+members = ["apps/api", "apps/poller", "packages/core"]
+
+[dependency-groups]
+dev = ["pytest>=8.3", "httpx>=0.28"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [
+    "packages/core/src",
+    "apps/poller/src",
+    "apps/api/src",
+]

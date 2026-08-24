@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>YouTube Digest</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #14110e;
+      --panel: #1d1914;
+      --ink: #f3ead9;
+      --muted: #b5a58c;
+      --line: #3a3228;
+      --accent: #e07a3d;
+      --accent-2: #7eb8a5;
+      --high: #e07a3d;
+      --medium: #d4b15d;
+      --low: #7f8b7a;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+      background: radial-gradient(1200px 600px at 10% -10%, #2a2118 0%, var(--bg) 45%);
+      color: var(--ink);
+      min-height: 100vh;
+    }
+    header {
+      padding: 28px 32px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    header h1 {
+      margin: 0;
+      font-size: 1.6rem;
+      letter-spacing: 0.02em;
+    }
+    header p { margin: 6px 0 0; color: var(--muted); }
+    nav {
+      display: flex;
+      gap: 8px;
+      padding: 16px 32px 0;
+      align-items: center;
+    }
+    nav button {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 14px;
+      cursor: pointer;
+      font: inherit;
+    }
+    nav button.icon {
+      width: 38px;
+      height: 38px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    nav button.icon svg {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    nav button.icon.busy svg {
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    nav #fetch-status {
+      margin: 0 0 0 6px;
+      font-size: 0.9rem;
+    }
+    nav button.active, nav button:hover {
+      color: var(--ink);
+      border-color: var(--accent);
+    }
+    nav button:disabled {
+      opacity: 0.65;
+      cursor: wait;
+    }
+    main { padding: 20px 32px 48px; }
+    .panel {
+      background: color-mix(in srgb, var(--panel) 92%, black);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px;
+    }
+    .filters, .search-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    input, select, textarea {
+      background: #100e0b;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font: inherit;
+    }
+    textarea { width: 100%; min-height: 90px; }
+    button.action {
+      background: var(--accent);
+      color: #1a120c;
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 10px 8px;
+      border-bottom: 1px solid var(--line);
+      font-size: 0.95rem;
+    }
+    th { color: var(--muted); font-weight: 600; }
+    .tags { display: flex; flex-wrap: wrap; gap: 4px; }
+    .tag {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 1px 8px;
+      color: var(--accent-2);
+      font-size: 0.8rem;
+    }
+    .rel-high { color: var(--high); }
+    .rel-medium { color: var(--medium); }
+    .rel-low { color: var(--low); }
+    .muted { color: var(--muted); }
+    .answer {
+      white-space: pre-wrap;
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+    .hidden { display: none; }
+    #custom-dates {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    #custom-dates.hidden { display: none; }
+    a { color: var(--accent-2); }
+    .status { margin: 8px 0 14px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>YouTube Digest</h1>
+    <p>Personal archive — browse, search, ask, and watch topic volume over time.</p>
+  </header>
+  <nav>
+    <button class="active" data-view="browse">Browse</button>
+    <button data-view="semantic">Semantic search</button>
+    <button data-view="ask">Ask</button>
+    <button data-view="trends">Trends</button>
+    <button type="button" id="fetch-latest" class="icon" title="Fetch latest from YouTube" aria-label="Fetch latest from YouTube">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M21 12a9 9 0 0 0-15.36-6.36"/>
+        <polyline points="3 3 3 9 9 9"/>
+        <path d="M3 12a9 9 0 0 0 15.36 6.36"/>
+        <polyline points="21 21 21 15 15 15"/>
+      </svg>
+    </button>
+    <span id="fetch-status" class="status"></span>
+  </nav>
+  <main>
+    <section id="view-browse" class="panel">
+      <div class="filters">
+        <select id="channel"></select>
+        <select id="date-range" aria-label="Date range">
+          <option value="24h">Last 24 hours</option>
+          <option value="7d" selected>Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+          <option value="90d">Last 90 days</option>
+          <option value="ytd">YTD</option>
+          <option value="custom">Custom</option>
+        </select>
+        <span id="custom-dates" class="hidden">
+          <input type="date" id="date-from" aria-label="From date" />
+          <input type="date" id="date-to" aria-label="To date" />
+        </span>
+        <input id="topic" placeholder="Topic tag" />
+        <select id="relevance">
+          <option value="">Any relevance</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+        <select id="watched">
+          <option value="">Watched or not</option>
+          <option value="false">Unwatched</option>
+          <option value="true">Watched</option>
+        </select>
+        <input id="keyword" placeholder="Keyword (title or summary)" />
+        <button class="action" id="apply-filters">Apply</button>
+      </div>
+      <div id="browse-status" class="status"></div>
+      <table>
+        <thead>
+          <tr>
+            <th>Published</th>
+            <th>Channel</th>
+            <th>Title</th>
+            <th>Relevance</th>
+            <th>Topics</th>
+            <th>Watched</th>
+          </tr>
+        </thead>
+        <tbody id="video-rows"></tbody>
+      </table>
+    </section>
+
+    <section id="view-semantic" class="panel hidden">
+      <div class="search-row">
+        <input id="semantic-q" placeholder="Semantic query over summaries" style="min-width: 320px" />
+        <button class="action" id="semantic-go">Search</button>
+      </div>
+      <div id="semantic-status" class="status"></div>
+      <div id="semantic-results"></div>
+    </section>
+
+    <section id="view-ask" class="panel hidden">
+      <textarea id="ask-q" placeholder="Ask a question across your archived videos"></textarea>
+      <div class="search-row">
+        <button class="action" id="ask-go">Ask</button>
+      </div>
+      <div id="ask-status" class="status"></div>
+      <div id="ask-answer" class="answer"></div>
+      <div id="ask-sources"></div>
+    </section>
+
+    <section id="view-trends" class="panel hidden">
+      <div class="filters">
+        <select id="trend-period">
+          <option value="week">Weekly</option>
+          <option value="month">Monthly</option>
+        </select>
+        <select id="trend-months">
+          <option value="3">Last 3 months</option>
+          <option value="6">Last 6 months</option>
+          <option value="12">Last 12 months</option>
+        </select>
+        <button class="action" id="trend-go">Refresh</button>
+      </div>
+      <canvas id="trend-chart" height="120"></canvas>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let channels = [];
+    let chart;
+
+    document.querySelectorAll("nav button[data-view]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("nav button[data-view]").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        ["browse", "semantic", "ask", "trends"].forEach((name) => {
+          $("view-" + name).classList.toggle("hidden", name !== btn.dataset.view);
+        });
+        if (btn.dataset.view === "trends") loadTrends();
+      });
+    });
+
+    async function loadChannels() {
+      channels = await (await fetch("/api/channels")).json();
+      const select = $("channel");
+      select.innerHTML = `<option value="">All channels</option>` +
+        channels.map((c) => `<option value="${c.channel_id}">${escapeHtml(c.channel_name)}</option>`).join("");
+    }
+
+    function pad2(n) {
+      return String(n).padStart(2, "0");
+    }
+
+    function ymd(d) {
+      return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    }
+
+    function daysAgoYmd(days) {
+      const d = new Date();
+      d.setDate(d.getDate() - days);
+      return ymd(d);
+    }
+
+    function hoursAgoIso(hours) {
+      const d = new Date(Date.now() - hours * 3600 * 1000);
+      return d.toISOString().replace(/\.\d{3}Z$/, "");
+    }
+
+    function dateBounds() {
+      const preset = $("date-range").value;
+      if (preset === "24h") return { from: hoursAgoIso(24), to: null };
+      if (preset === "7d") return { from: daysAgoYmd(7), to: null };
+      if (preset === "30d") return { from: daysAgoYmd(30), to: null };
+      if (preset === "90d") return { from: daysAgoYmd(90), to: null };
+      if (preset === "ytd") return { from: `${new Date().getFullYear()}-01-01`, to: null };
+      const from = $("date-from").value;
+      const to = $("date-to").value ? $("date-to").value + "T23:59:59" : null;
+      return { from: from || null, to };
+    }
+
+    function syncCustomDates() {
+      $("custom-dates").classList.toggle("hidden", $("date-range").value !== "custom");
+    }
+
+    function videoParams() {
+      const params = new URLSearchParams();
+      const dates = dateBounds();
+      if ($("channel").value) params.set("channel_id", $("channel").value);
+      if (dates.from) params.set("date_from", dates.from);
+      if (dates.to) params.set("date_to", dates.to);
+      if ($("topic").value.trim()) params.set("topic", $("topic").value.trim());
+      if ($("relevance").value) params.set("relevance", $("relevance").value);
+      if ($("watched").value) params.set("watched", $("watched").value);
+      if ($("keyword").value.trim()) params.set("q", $("keyword").value.trim());
+      return params;
+    }
+
+    async function loadVideos() {
+      $("browse-status").textContent = "Loading…";
+      const videos = await (await fetch("/api/videos?" + videoParams().toString())).json();
+      $("browse-status").textContent = videos.length + " videos";
+      $("video-rows").innerHTML = videos.map((v) => `
+        <tr>
+          <td>${escapeHtml((v.published_date || "").slice(0, 10))}</td>
+          <td>${escapeHtml(v.channel_name)}</td>
+          <td>
+            <a href="${escapeAttr(v.url)}" target="_blank" rel="noreferrer">${escapeHtml(v.title)}</a>
+            <div class="muted">${escapeHtml(v.summary || "")}</div>
+          </td>
+          <td class="rel-${escapeAttr(v.relevance)}">${escapeHtml(v.relevance)}</td>
+          <td><div class="tags">${(v.topics || []).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("")}</div></td>
+          <td><input type="checkbox" ${v.watched ? "checked" : ""} data-id="${escapeAttr(v.video_id)}" class="watch-toggle" /></td>
+        </tr>
+      `).join("");
+      document.querySelectorAll(".watch-toggle").forEach((box) => {
+        box.addEventListener("change", async () => {
+          await fetch(`/api/videos/${box.dataset.id}/watched`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ watched: box.checked }),
+          });
+        });
+      });
+    }
+
+    $("date-range").addEventListener("change", () => {
+      syncCustomDates();
+      if ($("date-range").value !== "custom") loadVideos();
+    });
+    $("apply-filters").addEventListener("click", loadVideos);
+
+    $("semantic-go").addEventListener("click", async () => {
+      const q = $("semantic-q").value.trim();
+      if (!q) return;
+      $("semantic-status").textContent = "Searching…";
+      const hits = await (await fetch("/api/search/semantic?q=" + encodeURIComponent(q))).json();
+      $("semantic-status").textContent = hits.length + " results";
+      $("semantic-results").innerHTML = hits.map((v) => `
+        <article>
+          <h3><a href="${escapeAttr(v.url)}" target="_blank" rel="noreferrer">${escapeHtml(v.title)}</a></h3>
+          <p class="muted">${escapeHtml(v.channel_name)} · ${escapeHtml((v.published_date || "").slice(0, 10))} · distance ${Number(v.distance).toFixed(3)}</p>
+          <p>${escapeHtml(v.summary)}</p>
+        </article>
+      `).join("");
+    });
+
+    $("ask-go").addEventListener("click", async () => {
+      const question = $("ask-q").value.trim();
+      if (!question) return;
+      $("ask-status").textContent = "Thinking…";
+      $("ask-answer").textContent = "";
+      $("ask-sources").innerHTML = "";
+      const res = await fetch("/api/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+      });
+      const data = await res.json();
+      $("ask-status").textContent = "";
+      $("ask-answer").textContent = data.answer || data.detail || "No answer";
+      $("ask-sources").innerHTML = (data.sources || []).map((v) =>
+        `<div><a href="${escapeAttr(v.url)}" target="_blank" rel="noreferrer">${escapeHtml(v.title)}</a> <span class="muted">— ${escapeHtml(v.channel_name)}</span></div>`
+      ).join("");
+    });
+
+    async function loadTrends() {
+      const period = $("trend-period").value;
+      const months = $("trend-months").value;
+      const rows = await (await fetch(`/api/trends?period=${period}&months=${months}`)).json();
+      const periods = [...new Set(rows.map((r) => r.period))];
+      const topics = [...new Set(rows.map((r) => r.topic))].slice(0, 8);
+      const colors = ["#e07a3d", "#7eb8a5", "#d4b15d", "#c97b84", "#8aa2d4", "#b5a58c", "#9ec27a", "#d08c5a"];
+      const datasets = topics.map((topic, i) => ({
+        label: topic,
+        data: periods.map((p) => {
+          const hit = rows.find((r) => r.topic === topic && r.period === p);
+          return hit ? hit.count : 0;
+        }),
+        borderColor: colors[i],
+        backgroundColor: "transparent",
+        tension: 0.25,
+      }));
+      if (chart) chart.destroy();
+      chart = new Chart($("trend-chart"), {
+        type: "line",
+        data: { labels: periods, datasets },
+        options: {
+          plugins: { legend: { labels: { color: "#f3ead9" } } },
+          scales: {
+            x: { ticks: { color: "#b5a58c" }, grid: { color: "#3a3228" } },
+            y: { ticks: { color: "#b5a58c" }, grid: { color: "#3a3228" }, beginAtZero: true },
+          },
+        },
+      });
+    }
+
+    $("trend-go").addEventListener("click", loadTrends);
+
+    $("fetch-latest").addEventListener("click", async () => {
+      const btn = $("fetch-latest");
+      if (btn.disabled) return;
+      btn.disabled = true;
+      btn.classList.add("busy");
+      $("fetch-status").textContent = "Fetching latest from YouTube…";
+      try {
+        const res = await fetch("/api/fetch-latest", { method: "POST" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const detail = data.detail;
+          $("fetch-status").textContent = typeof detail === "string" ? detail : "Fetch failed";
+          return;
+        }
+        $("fetch-status").textContent =
+          `Fetched ${data.fetched}: ${data.processed} processed, ${data.skipped} skipped, ${data.failed} failed`;
+        await loadChannels();
+        await loadVideos();
+      } catch (err) {
+        $("fetch-status").textContent = err && err.message ? err.message : "Fetch failed";
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove("busy");
+      }
+    });
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[ch]));
+    }
+    function escapeAttr(value) { return escapeHtml(value); }
+
+    loadChannels().then(loadVideos);
+  </script>
+</body>
+</html>

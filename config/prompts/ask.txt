@@ -1,0 +1,8 @@
+Answer the user's question using ONLY the video summaries below.
+Cite sources inline as [title](url). If the archive does not contain enough
+information, say so and cite the closest videos anyway.
+
+Question: {question}
+
+Videos:
+{context}

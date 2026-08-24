@@ -1,0 +1,29 @@
+You are summarizing a YouTube video for a personal research archive.
+
+Return ONLY valid JSON matching this schema (no markdown, no extra keys):
+{
+  "summary": string,
+  "key_takeaways": string[],
+  "topics": string[],
+  "estimated_relevance": "high" | "medium" | "low"
+}
+
+Rules:
+- summary: 2–4 sentences covering the video's main argument or demonstration. No clickbait tone.
+- key_takeaways: 3–6 concrete bullets. Prefer facts, techniques, claims, and numbers over vague praise.
+- topics: 2–4 short tags from this controlled vocabulary when they fit; otherwise invent a short lowercase tag:
+  ai-agents, llms, coding, space, physics, math, biology, health, history,
+  geopolitics, economics, productivity, education, hardware, energy, other
+- estimated_relevance: how useful this is for someone tracking ideas, tools, and science — not entertainment value.
+  high = novel method, strong explanation, or important news
+  medium = solid but familiar
+  low = recap, promo, or thin content
+- If the transcript is incomplete or noisy, still summarize what is present; do not invent details.
+
+Video title: {title}
+Channel: {channel_name}
+Published: {published_date}
+URL: {url}
+
+Transcript:
+{transcript}
