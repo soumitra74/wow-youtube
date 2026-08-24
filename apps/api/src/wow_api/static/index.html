@@ -4,10 +4,21 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>YouTube Digest</title>
+  <script>
+    (function () {
+      const saved = localStorage.getItem("wow-theme");
+      const theme = saved === "light" || saved === "dark"
+        ? saved
+        : (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <style>
-    :root {
+    :root, html[data-theme="dark"] {
+      color-scheme: dark;
       --bg: #14110e;
+      --bg-glow: #2a2118;
       --panel: #1d1914;
       --ink: #f3ead9;
       --muted: #b5a58c;
@@ -17,12 +28,30 @@
       --high: #e07a3d;
       --medium: #d4b15d;
       --low: #7f8b7a;
+      --input: #100e0b;
+      --action-ink: #1a120c;
+    }
+    html[data-theme="light"] {
+      color-scheme: light;
+      --bg: #f4eee4;
+      --bg-glow: #fbe6c8;
+      --panel: #fffaf2;
+      --ink: #241c14;
+      --muted: #74685a;
+      --line: #e0d4c4;
+      --accent: #d66a2c;
+      --accent-2: #2f7a68;
+      --high: #c45e24;
+      --medium: #9a7a28;
+      --low: #5a6b5c;
+      --input: #fffdf8;
+      --action-ink: #fffaf2;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; }
     body {
       font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
-      background: radial-gradient(1200px 600px at 10% -10%, #2a2118 0%, var(--bg) 45%);
+      background: radial-gradient(1200px 600px at 10% -10%, var(--bg-glow) 0%, var(--bg) 45%);
       color: var(--ink);
       min-height: 100vh;
     }
@@ -42,6 +71,10 @@
       padding: 16px 32px 0;
       align-items: center;
     }
+    #theme-toggle { margin-left: auto; flex-shrink: 0; }
+    #theme-toggle .icon-moon { display: none; }
+    html[data-theme="light"] #theme-toggle .icon-sun { display: none; }
+    html[data-theme="light"] #theme-toggle .icon-moon { display: block; }
     nav button {
       background: transparent;
       color: var(--muted);
@@ -88,7 +121,7 @@
     }
     main { padding: 20px 32px 48px; }
     .panel {
-      background: color-mix(in srgb, var(--panel) 92%, black);
+      background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 16px;
       padding: 16px;
@@ -100,7 +133,7 @@
       margin-bottom: 14px;
     }
     input, select, textarea {
-      background: #100e0b;
+      background: var(--input);
       color: var(--ink);
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -110,7 +143,7 @@
     textarea { width: 100%; min-height: 90px; }
     button.action {
       background: var(--accent);
-      color: #1a120c;
+      color: var(--action-ink);
       border: 0;
       border-radius: 8px;
       padding: 8px 14px;
@@ -173,6 +206,15 @@
       </svg>
     </button>
     <span id="fetch-status" class="status"></span>
+    <button type="button" id="theme-toggle" class="icon" title="Switch to light theme" aria-label="Switch to light theme">
+      <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M21 14.5A8.5 8.5 0 1 1 9.5 3 7 7 0 0 0 21 14.5z"/>
+      </svg>
+    </button>
   </nav>
   <main>
     <section id="view-browse" class="panel">
@@ -260,6 +302,34 @@
     const $ = (id) => document.getElementById(id);
     let channels = [];
     let chart;
+
+    function currentTheme() {
+      return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+    }
+
+    function cssVar(name) {
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    function syncThemeToggle() {
+      const next = currentTheme() === "dark" ? "light" : "dark";
+      const label = "Switch to " + next + " theme";
+      const btn = $("theme-toggle");
+      btn.title = label;
+      btn.setAttribute("aria-label", label);
+    }
+
+    function setTheme(theme) {
+      document.documentElement.setAttribute("data-theme", theme);
+      localStorage.setItem("wow-theme", theme);
+      syncThemeToggle();
+      if (chart && !$("view-trends").classList.contains("hidden")) loadTrends();
+    }
+
+    $("theme-toggle").addEventListener("click", () => {
+      setTheme(currentTheme() === "dark" ? "light" : "dark");
+    });
+    syncThemeToggle();
 
     document.querySelectorAll("nav button[data-view]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -417,10 +487,10 @@
         type: "line",
         data: { labels: periods, datasets },
         options: {
-          plugins: { legend: { labels: { color: "#f3ead9" } } },
+          plugins: { legend: { labels: { color: cssVar("--ink") } } },
           scales: {
-            x: { ticks: { color: "#b5a58c" }, grid: { color: "#3a3228" } },
-            y: { ticks: { color: "#b5a58c" }, grid: { color: "#3a3228" }, beginAtZero: true },
+            x: { ticks: { color: cssVar("--muted") }, grid: { color: cssVar("--line") } },
+            y: { ticks: { color: cssVar("--muted") }, grid: { color: cssVar("--line") }, beginAtZero: true },
           },
         },
       });
