@@ -43,6 +43,14 @@ class FeedVideo:
     channel_name: str = ""
 
 
+@dataclass(frozen=True)
+class ResolvedVideoMeta:
+    channel_id: str = ""
+    published_date: str = ""
+    channel_name: str = ""
+    title: str = ""
+
+
 class NotificationAuthError(Exception):
     """YouTube cookies are missing or unusable for the notification inbox."""
 
@@ -191,14 +199,21 @@ class _YtDlpWarningLogger:
         logger.warning("%s", text)
 
 
-def _ytdlp_video_opts(*, cookiefile: str | None = None, **extra: Any) -> dict[str, Any]:
+def _ytdlp_core_opts() -> dict[str, Any]:
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
         "logger": _YtDlpWarningLogger(),
-        "extractor_args": {
-            "youtube": {"player_client": _youtube_player_clients(cookies=bool(cookiefile))}
-        },
+    }
+    if shutil.which("deno"):
+        opts["js_runtimes"] = {"deno": {}}
+    return opts
+
+
+def _ytdlp_video_opts(*, cookiefile: str | None = None, **extra: Any) -> dict[str, Any]:
+    opts = _ytdlp_core_opts()
+    opts["extractor_args"] = {
+        "youtube": {"player_client": _youtube_player_clients(cookies=bool(cookiefile))}
     }
     opts.update(extra)
     if cookiefile:
@@ -221,9 +236,9 @@ def _is_retryable_ytdlp_error(exc: BaseException) -> bool:
     )
 
 
-def fetch_notification_videos(limit: int | None = None) -> list[FeedVideo]:
+def fetch_notification_videos(*, scan_limit: int | None = None) -> list[FeedVideo]:
     """Latest videos from the signed-in YouTube notification inbox."""
-    n = settings.YOUTUBE_NOTIFICATIONS_LIMIT if limit is None else limit
+    n = settings.YOUTUBE_NOTIFICATIONS_SCAN_LIMIT if scan_limit is None else scan_limit
     cookies = Path(settings.YOUTUBE_COOKIES_PATH)
     if not cookies.exists():
         raise NotificationAuthError(
@@ -234,8 +249,7 @@ def fetch_notification_videos(limit: int | None = None) -> list[FeedVideo]:
     yt_dlp = _youtube_dl()
     with _copied_cookiefile() as cookie_copy:
         opts = {
-            "quiet": True,
-            "no_warnings": True,
+            **_ytdlp_core_opts(),
             "skip_download": True,
             "extract_flat": True,
             "playlistend": n,
@@ -251,14 +265,14 @@ def fetch_notification_videos(limit: int | None = None) -> list[FeedVideo]:
                     + _COOKIE_EXPORT_HINT
                 ) from exc
             raise
-    return notification_entries_to_videos(info, limit=n, resolve_channel_id=_resolve_channel_id)
+    return notification_entries_to_videos(info, limit=n, resolve_metadata=_resolve_video_metadata)
 
 
 def notification_entries_to_videos(
     info: dict[str, Any],
     *,
     limit: int,
-    resolve_channel_id: Callable[[str], str | None] | None = None,
+    resolve_metadata: Callable[[str], ResolvedVideoMeta | None] | None = None,
 ) -> list[FeedVideo]:
     videos: list[FeedVideo] = []
     seen: set[str] = set()
@@ -269,8 +283,22 @@ def notification_entries_to_videos(
         if not video_id or video_id in seen:
             continue
         channel_id = _dict_channel_id(entry)
-        if not channel_id and resolve_channel_id:
-            channel_id = resolve_channel_id(video_id) or ""
+        published_date = _dict_published_date(entry)
+        channel_name = _dict_channel_name(entry)
+        title = str(entry.get("title") or video_id)
+        if resolve_metadata and (
+            not channel_id or not published_date or not channel_name or title == video_id
+        ):
+            meta = resolve_metadata(video_id)
+            if meta:
+                if not channel_id:
+                    channel_id = meta.channel_id
+                if not published_date:
+                    published_date = meta.published_date
+                if not channel_name and meta.channel_name:
+                    channel_name = meta.channel_name
+                if title == video_id and meta.title:
+                    title = meta.title
         if not channel_id:
             logger.info("Skipping notification %s — no channel id", video_id)
             continue
@@ -280,11 +308,11 @@ def notification_entries_to_videos(
         videos.append(
             FeedVideo(
                 video_id=video_id,
-                title=str(entry.get("title") or video_id),
-                published_date=_dict_published_date(entry),
+                title=title,
+                published_date=published_date,
                 url=raw_url if "watch?v=" in raw_url else watch_url,
                 channel_id=channel_id,
-                channel_name=_dict_channel_name(entry),
+                channel_name=channel_name,
             )
         )
         if len(videos) >= limit:
@@ -333,7 +361,7 @@ def _dict_published_date(entry: dict[str, Any]) -> str:
     return ""
 
 
-def _resolve_channel_id(video_id: str) -> str | None:
+def _resolve_video_metadata(video_id: str) -> ResolvedVideoMeta | None:
     yt_dlp = _youtube_dl()
     with _copied_cookiefile() as cookie_copy:
         opts = _ytdlp_video_opts(
@@ -345,9 +373,33 @@ def _resolve_channel_id(video_id: str) -> str | None:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False) or {}
         except Exception as exc:
-            logger.info("Could not resolve channel for %s: %s", video_id, exc)
+            logger.info("Could not resolve metadata for %s: %s", video_id, exc)
             return None
-    return _dict_channel_id(info) or None
+    return ResolvedVideoMeta(
+        channel_id=_dict_channel_id(info),
+        published_date=_dict_published_date(info),
+        channel_name=_dict_channel_name(info),
+        title=str(info.get("title") or ""),
+    )
+
+
+def _resolve_channel_id(video_id: str) -> str | None:
+    meta = _resolve_video_metadata(video_id)
+    if not meta or not meta.channel_id:
+        return None
+    return meta.channel_id
+
+
+def patch_published_date_if_missing(video_id: str) -> bool:
+    from wow_core.db import get_video, update_published_date_if_missing
+
+    existing = get_video(video_id)
+    if existing and (existing.get("published_date") or "").strip():
+        return False
+    meta = _resolve_video_metadata(video_id)
+    if not meta or not meta.published_date.strip():
+        return False
+    return update_published_date_if_missing(video_id, meta.published_date)
 
 
 def _entry_video_id(entry: Any) -> str | None:

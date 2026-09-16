@@ -52,7 +52,12 @@ WHISPER_MAX_MINUTES = int(os.getenv("WHISPER_MAX_MINUTES", "90"))
 WHISPER_SHARD_MINUTES = int(os.getenv("WHISPER_SHARD_MINUTES", "10"))
 WHISPER_SHARD_OVERLAP_SECONDS = float(os.getenv("WHISPER_SHARD_OVERLAP_SECONDS", "5"))
 SEMANTIC_TOP_K = int(os.getenv("SEMANTIC_TOP_K", "8"))
+# Max new videos to summarize per reload (0 = no cap for one run).
 YOUTUBE_NOTIFICATIONS_LIMIT = int(os.getenv("YOUTUBE_NOTIFICATIONS_LIMIT", "10"))
+# How many inbox rows yt-dlp reads (top N are often already archived).
+YOUTUBE_NOTIFICATIONS_SCAN_LIMIT = int(
+    os.getenv("YOUTUBE_NOTIFICATIONS_SCAN_LIMIT", "40")
+)
 # 0 = unlimited. Default keeps scheduled polls from eating the full RSS backlog.
 POLL_LIMIT = int(os.getenv("POLL_LIMIT", "10"))
 POLL_MAX_AGE_DAYS = int(os.getenv("POLL_MAX_AGE_DAYS", "3"))

@@ -94,6 +94,8 @@ def test_query_filters_and_keyword(tmp_path: Path) -> None:
     rows = query_videos(topic="agents", keyword="LangGraph", db_path=path)
     assert len(rows) == 1
     assert query_videos(relevance="low", db_path=path) == []
+    assert query_videos(date_from="2099-01-01T00:00:00+00:00", db_path=path) == []
+    assert len(query_videos(date_from="2020-01-01T00:00:00+00:00", date_field="processed", db_path=path)) == 1
 
 
 def test_error_seen_can_be_updated(tmp_path: Path) -> None:

@@ -50,7 +50,12 @@ def test_process_retries_error_rows(tmp_path: Path, monkeypatch) -> None:
         raise TranscriptUnavailable("none")
 
     monkeypatch.setattr("wow_poller.pipeline.get_transcript", no_captions)
-    video = SimpleNamespace(video_id="vid1", title="Old", published_date="", url="")
+    video = SimpleNamespace(
+        video_id="vid1",
+        title="Old",
+        published_date="2026-08-22T00:00:00+00:00",
+        url="",
+    )
     assert _process_video(video, {"channel_id": "chan1"}, retry_errors=False) == "skipped"
     assert called["n"] == 0
     assert _process_video(video, {"channel_id": "chan1"}, retry_errors=True) == "skipped"
@@ -61,7 +66,7 @@ def test_run_latest_upserts_channels_and_processes_notifications(tmp_path: Path,
     _prepare(tmp_path, monkeypatch)
     monkeypatch.setattr(
         "wow_poller.pipeline.fetch_notification_videos",
-        lambda limit=None: [
+        lambda scan_limit=None: [
             FeedVideo(
                 video_id="new1",
                 title="From inbox",

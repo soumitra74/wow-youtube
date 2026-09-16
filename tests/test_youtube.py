@@ -21,6 +21,7 @@ from wow_core.youtube import (
     _transcribe_with_whisper,
     _vtt_to_text,
     _resolve_channel_id,
+    _resolve_video_metadata,
     _youtube_player_clients,
     _YtDlpWarningLogger,
     fetch_notification_videos,
@@ -64,6 +65,7 @@ def _fake_ydl(captured: dict, *, rewrite: bool = False, error: Exception | None 
                         "title": "Latest",
                         "channel_id": "UCchan1",
                         "channel": "Demo",
+                        "upload_date": "20260822",
                     }
                 ]
             }
@@ -129,6 +131,24 @@ def test_notification_entries_to_videos_respects_limit_and_skips_non_videos() ->
     assert videos[1].url.endswith("bbbbbbbbbbb")
 
 
+def test_notification_entries_fills_published_date_from_metadata() -> None:
+    from wow_core.youtube import ResolvedVideoMeta
+
+    info = {
+        "entries": [
+            {"id": "aaaaaaaaaaa", "title": "No RSS date", "channel_id": "UCchan1", "channel": "A"},
+        ]
+    }
+    videos = notification_entries_to_videos(
+        info,
+        limit=10,
+        resolve_metadata=lambda video_id: ResolvedVideoMeta(
+            published_date="2026-09-10T12:00:00+00:00"
+        ),
+    )
+    assert videos[0].published_date == "2026-09-10T12:00:00+00:00"
+
+
 def test_notification_entries_dedupe_and_resolve_missing_channel_id() -> None:
     info = {
         "entries": [
@@ -137,8 +157,12 @@ def test_notification_entries_dedupe_and_resolve_missing_channel_id() -> None:
             {"id": "bbbbbbbbbbb", "title": "Needs lookup", "channel": "B"},
         ]
     }
+    from wow_core.youtube import ResolvedVideoMeta
+
     videos = notification_entries_to_videos(
-        info, limit=10, resolve_channel_id=lambda video_id: "UClooked"
+        info,
+        limit=10,
+        resolve_metadata=lambda video_id: ResolvedVideoMeta(channel_id="UClooked"),
     )
     assert [v.video_id for v in videos] == ["aaaaaaaaaaa", "bbbbbbbbbbb"]
     assert videos[1].channel_id == "UClooked"
@@ -149,7 +173,7 @@ def test_fetch_notification_videos_uses_env_limit_and_cookies(tmp_path: Path, mo
     _write_login_cookies(cookies)
     original = cookies.read_text(encoding="utf-8")
     monkeypatch.setattr("wow_core.settings.YOUTUBE_COOKIES_PATH", cookies)
-    monkeypatch.setattr("wow_core.settings.YOUTUBE_NOTIFICATIONS_LIMIT", 3)
+    monkeypatch.setattr("wow_core.settings.YOUTUBE_NOTIFICATIONS_SCAN_LIMIT", 3)
     captured: dict = {}
     monkeypatch.setattr("wow_core.youtube._youtube_dl", lambda: _fake_ydl(captured, rewrite=True))
     videos = fetch_notification_videos()
@@ -222,9 +246,17 @@ def test_resolve_channel_id_uses_safari_client_and_cookie_copy(tmp_path: Path, m
         def extract_info(self, url, download=True):
             captured["url"] = url
             captured["download"] = download
-            return {"channel_id": "UCresolvedchannelidxx", "title": "Ignored"}
+            return {
+                "channel_id": "UCresolvedchannelidxx",
+                "title": "Ignored",
+                "upload_date": "20260910",
+            }
 
     monkeypatch.setattr("wow_core.youtube._youtube_dl", lambda: type("M", (), {"YoutubeDL": FakeYDL}))
+    meta = _resolve_video_metadata("aaaaaaaaaaa")
+    assert meta is not None
+    assert meta.channel_id == "UCresolvedchannelidxx"
+    assert meta.published_date.startswith("2026-09-10")
     assert _resolve_channel_id("aaaaaaaaaaa") == "UCresolvedchannelidxx"
     assert captured["url"] == "https://www.youtube.com/watch?v=aaaaaaaaaaa"
     assert captured["download"] is False

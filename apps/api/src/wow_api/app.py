@@ -67,15 +67,19 @@ def api_videos(
     channel_id: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    date_field: str = "published",
     topic: str | None = None,
     relevance: str | None = None,
     watched: bool | None = None,
     q: str | None = Query(default=None, description="Keyword search over title and summary"),
 ) -> list[dict[str, Any]]:
+    if date_field not in {"published", "processed"}:
+        raise HTTPException(status_code=400, detail="date_field must be published or processed")
     return query_videos(
         channel_id=channel_id,
         date_from=date_from,
         date_to=date_to,
+        date_field=date_field,
         topic=topic,
         relevance=relevance,
         watched=watched,

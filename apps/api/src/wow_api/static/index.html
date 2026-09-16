@@ -222,8 +222,9 @@
         <select id="channel"></select>
         <select id="date-range" aria-label="Date range">
           <option value="24h">Last 24 hours</option>
-          <option value="7d" selected>Last 7 days</option>
-          <option value="30d">Last 30 days</option>
+          <option value="sync24h">Synced last 24 hours</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d" selected>Last 30 days</option>
           <option value="90d">Last 90 days</option>
           <option value="ytd">YTD</option>
           <option value="custom">Custom</option>
@@ -370,14 +371,17 @@
 
     function dateBounds() {
       const preset = $("date-range").value;
-      if (preset === "24h") return { from: hoursAgoIso(24), to: null };
-      if (preset === "7d") return { from: daysAgoYmd(7), to: null };
-      if (preset === "30d") return { from: daysAgoYmd(30), to: null };
-      if (preset === "90d") return { from: daysAgoYmd(90), to: null };
-      if (preset === "ytd") return { from: `${new Date().getFullYear()}-01-01`, to: null };
+      if (preset === "24h") return { from: hoursAgoIso(24), to: null, field: "published" };
+      if (preset === "sync24h") return { from: hoursAgoIso(24), to: null, field: "processed" };
+      if (preset === "7d") return { from: daysAgoYmd(7), to: null, field: "published" };
+      if (preset === "30d") return { from: daysAgoYmd(30), to: null, field: "published" };
+      if (preset === "90d") return { from: daysAgoYmd(90), to: null, field: "published" };
+      if (preset === "ytd") {
+        return { from: `${new Date().getFullYear()}-01-01`, to: null, field: "published" };
+      }
       const from = $("date-from").value;
       const to = $("date-to").value ? $("date-to").value + "T23:59:59" : null;
-      return { from: from || null, to };
+      return { from: from || null, to, field: "published" };
     }
 
     function syncCustomDates() {
@@ -388,7 +392,10 @@
       const params = new URLSearchParams();
       const dates = dateBounds();
       if ($("channel").value) params.set("channel_id", $("channel").value);
-      if (dates.from) params.set("date_from", dates.from);
+      if (dates.from) {
+        params.set("date_from", dates.from);
+        params.set("date_field", dates.field || "published");
+      }
       if (dates.to) params.set("date_to", dates.to);
       if ($("topic").value.trim()) params.set("topic", $("topic").value.trim());
       if ($("relevance").value) params.set("relevance", $("relevance").value);
@@ -512,8 +519,16 @@
           $("fetch-status").textContent = typeof detail === "string" ? detail : "Fetch failed";
           return;
         }
-        $("fetch-status").textContent =
-          `Fetched ${data.fetched}: ${data.processed} processed, ${data.skipped} skipped, ${data.failed} failed`;
+        const inbox = data.inbox_rows != null ? data.inbox_rows : data.fetched;
+        const scanned = data.scanned != null ? data.scanned : data.fetched;
+        let msg =
+          `Scanned ${scanned} of ${inbox} inbox: ${data.processed} processed, ${data.skipped} skipped, ${data.failed} failed`;
+        if (data.processed > 0) {
+          msg += " — use Synced last 24 hours to see what this run added";
+        } else if (data.skipped > 0) {
+          msg += " — raise YOUTUBE_NOTIFICATIONS_SCAN_LIMIT if the inbox backlog is deep";
+        }
+        $("fetch-status").textContent = msg;
         await loadChannels();
         await loadVideos();
       } catch (err) {

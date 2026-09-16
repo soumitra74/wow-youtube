@@ -217,6 +217,33 @@ def insert_video(
         )
 
 
+def update_published_date_if_missing(
+    video_id: str,
+    published_date: str,
+    db_path: Path | None = None,
+) -> bool:
+    if not published_date.strip():
+        return False
+    with connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            UPDATE videos
+            SET published_date = ?
+            WHERE video_id = ? AND COALESCE(published_date, '') = ''
+            """,
+            (published_date, video_id),
+        )
+        conn.execute(
+            """
+            UPDATE seen
+            SET published_date = ?
+            WHERE video_id = ? AND COALESCE(published_date, '') = ''
+            """,
+            (published_date, video_id),
+        )
+    return cur.rowcount > 0
+
+
 def set_watched(video_id: str, watched: bool, db_path: Path | None = None) -> bool:
     with connect(db_path) as conn:
         cur = conn.execute(
@@ -263,22 +290,26 @@ def query_videos(
     channel_id: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    date_field: str = "published",
     topic: str | None = None,
     relevance: str | None = None,
     watched: bool | None = None,
     keyword: str | None = None,
     db_path: Path | None = None,
 ) -> list[dict[str, Any]]:
+    if date_field not in {"published", "processed"}:
+        raise ValueError("date_field must be published or processed")
+    date_col = "v.processed_date" if date_field == "processed" else "v.published_date"
     clauses: list[str] = []
     params: list[Any] = []
     if channel_id:
         clauses.append("v.channel_id = ?")
         params.append(channel_id)
     if date_from:
-        clauses.append("v.published_date >= ?")
+        clauses.append(f"{date_col} >= ?")
         params.append(date_from)
     if date_to:
-        clauses.append("v.published_date <= ?")
+        clauses.append(f"{date_col} <= ?")
         params.append(date_to)
     if relevance:
         clauses.append("v.relevance = ?")
@@ -302,7 +333,7 @@ def query_videos(
         FROM videos v
         JOIN channels c ON c.channel_id = v.channel_id
         {where}
-        ORDER BY v.published_date DESC
+        ORDER BY {date_col} DESC
     """
     with connect(db_path) as conn:
         rows = conn.execute(sql, params).fetchall()

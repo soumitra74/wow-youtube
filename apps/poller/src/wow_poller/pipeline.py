@@ -19,7 +19,15 @@ from wow_core.db import (
 )
 from wow_core.digest import write_digest
 from wow_core.logging_setup import configure_poller_logging
-from wow_core.youtube import TranscriptUnavailable, fetch_channel_feed, fetch_notification_videos, get_transcript, truncate_transcript
+from wow_core.youtube import (
+    TranscriptUnavailable,
+    fetch_channel_feed,
+    fetch_notification_videos,
+    get_transcript,
+    patch_published_date_if_missing,
+    truncate_transcript,
+    _resolve_video_metadata,
+)
 
 logger = logging.getLogger("wow.poller")
 
@@ -145,11 +153,19 @@ def run_latest(*, retry_errors: bool = False) -> dict[str, int]:
     settings.ensure_data_dirs()
     init_db()
 
-    videos = fetch_notification_videos()
+    scan_cap = settings.YOUTUBE_NOTIFICATIONS_SCAN_LIMIT
+    process_cap = settings.YOUTUBE_NOTIFICATIONS_LIMIT
+    videos = fetch_notification_videos(scan_limit=scan_cap)
     processed: list[dict[str, Any]] = []
     processed_n = skipped_n = failed_n = 0
+    scanned_n = 0
 
     for video in videos:
+        if process_cap > 0 and processed_n >= process_cap:
+            break
+        scanned_n += 1
+        if not (video.published_date or "").strip():
+            patch_published_date_if_missing(video.video_id)
         channel_name = video.channel_name or video.channel_id
         sync_channels([{"channel_id": video.channel_id, "channel_name": channel_name}])
         result = _process_video(
@@ -170,14 +186,17 @@ def run_latest(*, retry_errors: bool = False) -> dict[str, int]:
     if processed:
         write_digest(processed)
     logger.info(
-        "Notification fetch: %s fetched, %s processed, %s skipped, %s failed",
+        "Notification fetch: scanned %s/%s inbox rows, %s processed, %s skipped, %s failed",
+        scanned_n,
         len(videos),
         processed_n,
         skipped_n,
         failed_n,
     )
     return {
-        "fetched": len(videos),
+        "scanned": scanned_n,
+        "fetched": scanned_n,
+        "inbox_rows": len(videos),
         "processed": processed_n,
         "skipped": skipped_n,
         "failed": failed_n,
@@ -195,6 +214,12 @@ def _process_video(video: Any, channel: dict[str, Any], *, retry_errors: bool) -
         if status == "error" and not retry_errors:
             return "skipped"
 
+    published_date = (video.published_date or "").strip()
+    if not published_date:
+        meta = _resolve_video_metadata(video.video_id)
+        if meta and meta.published_date.strip():
+            published_date = meta.published_date.strip()
+
     logger.info("Processing %s (%s)", video.title, video.video_id)
     try:
         transcript = get_transcript(video.video_id)
@@ -205,7 +230,7 @@ def _process_video(video: Any, channel: dict[str, Any], *, retry_errors: bool) -
         summary = summarize_video(
             title=video.title,
             channel_name=channel["channel_name"],
-            published_date=video.published_date,
+            published_date=published_date,
             url=video.url,
             transcript=text,
         )
@@ -214,14 +239,14 @@ def _process_video(video: Any, channel: dict[str, Any], *, retry_errors: bool) -
             channel_id=channel["channel_id"],
             status="processed",
             title=video.title,
-            published_date=video.published_date,
+            published_date=published_date,
             url=video.url,
         )
         insert_video(
             video_id=video.video_id,
             channel_id=channel["channel_id"],
             title=video.title,
-            published_date=video.published_date,
+            published_date=published_date,
             url=video.url,
             transcript_length=len(transcript.text),
             summary=summary["summary"],
@@ -234,7 +259,7 @@ def _process_video(video: Any, channel: dict[str, Any], *, retry_errors: bool) -
             summary=summary["summary"],
             channel_id=channel["channel_id"],
             channel_name=channel["channel_name"],
-            published_date=video.published_date,
+            published_date=published_date,
             topics=summary["topics"],
             relevance=summary["estimated_relevance"],
             title=video.title,
@@ -248,7 +273,7 @@ def _process_video(video: Any, channel: dict[str, Any], *, retry_errors: bool) -
             channel_id=channel["channel_id"],
             status="skipped_no_transcript",
             title=video.title,
-            published_date=video.published_date,
+            published_date=published_date,
             url=video.url,
             error_message=str(exc),
         )
@@ -260,7 +285,7 @@ def _process_video(video: Any, channel: dict[str, Any], *, retry_errors: bool) -
             channel_id=channel["channel_id"],
             status="error",
             title=video.title,
-            published_date=video.published_date,
+            published_date=published_date,
             url=video.url,
             error_message=str(exc),
         )
@@ -272,7 +297,7 @@ def _process_video(video: Any, channel: dict[str, Any], *, retry_errors: bool) -
             channel_id=channel["channel_id"],
             status="error",
             title=video.title,
-            published_date=video.published_date,
+            published_date=published_date,
             url=video.url,
             error_message=str(exc),
         )
