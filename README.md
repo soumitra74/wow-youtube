@@ -16,7 +16,7 @@ docker compose up --build
 
 UI: http://localhost:8000
 
-`docker-compose.override.yml` bind-mounts `apps/`, `packages/`, `config/`, and `data/` and enables uvicorn `--reload`. Rebuild the image when Python dependencies change (includes Deno + `yt-dlp-ejs` for YouTube JS challenges).
+`docker-compose.override.yml` bind-mounts `apps/`, `packages/`, `config/`, and `data/` and enables uvicorn `--reload`. Rebuild the image when Python dependencies change (includes Deno + `yt-dlp-ejs` for YouTube JS challenges). The image uses CPU PyTorch so Linux does not pull CUDA libraries.
 
 Runtime settings live in `.env` (copy from `.env.example`). Poll budget:
 

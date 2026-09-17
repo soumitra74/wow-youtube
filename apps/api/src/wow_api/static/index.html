@@ -505,20 +505,48 @@
 
     $("trend-go").addEventListener("click", loadTrends);
 
+    function formatFetchStatus(snapshot) {
+      if (!snapshot) return "Working…";
+      const sil = snapshot.silence_seconds > 2
+        ? ` · ${Math.round(snapshot.silence_seconds)}s since last update`
+        : "";
+      const phase = snapshot.phase ? `[${snapshot.phase}] ` : "";
+      return phase + (snapshot.message || "Working…") + sil;
+    }
+
+    async function pollFetchUntilDone() {
+      for (;;) {
+        const snapshot = await (await fetch("/api/fetch-status")).json();
+        $("fetch-status").textContent = formatFetchStatus(snapshot);
+        if (!snapshot.running) {
+          if (snapshot.error) throw new Error(snapshot.error);
+          return snapshot.result || {};
+        }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+
     $("fetch-latest").addEventListener("click", async () => {
       const btn = $("fetch-latest");
       if (btn.disabled) return;
       btn.disabled = true;
       btn.classList.add("busy");
-      $("fetch-status").textContent = "Fetching latest from YouTube…";
+      $("fetch-status").textContent = "Starting fetch…";
       try {
         const res = await fetch("/api/fetch-latest", { method: "POST" });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          const detail = data.detail;
-          $("fetch-status").textContent = typeof detail === "string" ? detail : "Fetch failed";
+        const body = await res.json().catch(() => ({}));
+        if (res.status === 409) {
+          $("fetch-status").textContent = body.detail || "Fetch already running";
+          await pollFetchUntilDone();
+          await loadChannels();
+          await loadVideos();
           return;
         }
+        if (!res.ok && res.status !== 202) {
+          $("fetch-status").textContent = typeof body.detail === "string" ? body.detail : "Fetch failed";
+          return;
+        }
+        const data = await pollFetchUntilDone();
         const inbox = data.inbox_rows != null ? data.inbox_rows : data.fetched;
         const scanned = data.scanned != null ? data.scanned : data.fetched;
         let msg =

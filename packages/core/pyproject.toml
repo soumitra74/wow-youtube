@@ -10,6 +10,7 @@ dependencies = [
     "faster-whisper>=1.1",
     "python-dotenv>=1.1",
     "sentence-transformers>=3.0",
+    "torch",
     "youtube-transcript-api>=1.2",
     "yt-dlp[default]>=2025.1",
 ]

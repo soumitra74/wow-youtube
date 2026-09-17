@@ -9,3 +9,7 @@ docs
 *.md
 .cursor
 agent-transcripts
+tests
+graphify-out
+Dockerfile
+docker-compose*.yml

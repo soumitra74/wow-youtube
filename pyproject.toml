@@ -5,6 +5,15 @@ description = "Personal YouTube feed digest monorepo"
 requires-python = ">=3.12"
 dependencies = []
 
+[tool.uv]
+# CPU wheels only: Linux PyPI torch pulls CUDA + NVIDIA libs (several GB).
+index = [
+    { name = "pytorch-cpu", url = "https://download.pytorch.org/whl/cpu", explicit = true },
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
 [tool.uv.workspace]
 members = ["apps/api", "apps/poller", "packages/core"]
 

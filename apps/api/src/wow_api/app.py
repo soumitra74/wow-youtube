@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -15,6 +16,7 @@ from wow_core.logging_setup import configure_server_logging
 from wow_core.chroma_store import query_similar
 from wow_core.claude_client import ask_across_videos
 from wow_core.db import get_videos_by_ids, init_db, list_channels, query_videos, set_watched, topic_trends
+from wow_core.fetch_status import get_fetch_progress
 from wow_core.youtube import NotificationAuthError
 from wow_poller.pipeline import run_latest
 
@@ -125,14 +127,33 @@ def api_trends(period: str = "week", months: int = 3) -> list[dict[str, Any]]:
     return topic_trends(months=months, bucket=period)  # type: ignore[arg-type]
 
 
-@app.post("/api/fetch-latest")
-def api_fetch_latest() -> dict[str, Any]:
+def _run_fetch_job() -> None:
+    progress = get_fetch_progress()
     try:
-        return run_latest()
+        result = run_latest()
+        progress.complete(result)
     except NotificationAuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        progress.fail(str(exc))
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"YouTube fetch failed: {exc}") from exc
+        progress.fail(f"YouTube fetch failed: {exc}")
+
+
+@app.get("/api/fetch-status")
+def api_fetch_status() -> dict[str, Any]:
+    return get_fetch_progress().snapshot()
+
+
+@app.post("/api/fetch-latest")
+def api_fetch_latest() -> JSONResponse:
+    progress = get_fetch_progress()
+    if progress.is_running():
+        raise HTTPException(status_code=409, detail="Fetch already in progress")
+    try:
+        progress.begin()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    threading.Thread(target=_run_fetch_job, name="fetch-latest", daemon=True).start()
+    return JSONResponse({"started": True}, status_code=202)
 
 
 class WatchedBody(BaseModel):

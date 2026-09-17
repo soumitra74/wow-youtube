@@ -111,6 +111,11 @@ def get_transcript(
     if not generate:
         raise TranscriptUnavailable("no YouTube captions and generation disabled")
 
+    from wow_core.fetch_status import active_progress
+
+    prog = active_progress()
+    if prog:
+        prog.update("transcript", f"Whisper fallback for {video_id} (download + transcribe)…")
     limit = settings.WHISPER_MAX_MINUTES if max_minutes is None else max_minutes
     return _transcribe_with_whisper(video_id, max_minutes=limit)
 
@@ -306,21 +311,34 @@ def fetch_notification_videos(*, scan_limit: int | None = None) -> list[FeedVide
 
 def merge_inbox_and_playlist_videos() -> list[FeedVideo]:
     """Notification inbox plus configured playlists (Watch Later and extras), de-duplicated."""
+    from wow_core.fetch_status import active_progress
+
+    progress = active_progress()
+    if progress:
+        progress.update("scan", "Reading YouTube notification inbox (yt-dlp)…")
     videos = fetch_notification_videos()
     seen = {v.video_id for v in videos}
+    if progress:
+        progress.update("scan", f"Inbox: {len(videos)} row(s); reading Watch Later playlist…")
 
     if settings.YOUTUBE_FETCH_WATCH_LATER:
         for video in fetch_watch_later_videos():
             if video.video_id not in seen:
                 videos.append(video)
                 seen.add(video.video_id)
+        if progress:
+            progress.update("scan", f"After Watch Later: {len(videos)} unique candidate(s)")
 
     for playlist_id in settings.YOUTUBE_EXTRA_PLAYLIST_IDS:
+        if progress:
+            progress.update("scan", f"Reading playlist {playlist_id}…")
         for video in fetch_playlist_videos(playlist_id):
             if video.video_id not in seen:
                 videos.append(video)
                 seen.add(video.video_id)
 
+    if progress:
+        progress.update("scan", f"Scan complete — {len(videos)} video(s) to consider")
     return videos
 
 
@@ -448,6 +466,14 @@ def _resolve_video_metadata(video_id: str) -> ResolvedVideoMeta | None:
                         max_retries,
                         wait,
                     )
+                    from wow_core.fetch_status import active_progress
+
+                    prog = active_progress()
+                    if prog:
+                        prog.update(
+                            "wait",
+                            f"Rate limited (metadata {video_id}); waiting {wait:.0f}s",
+                        )
                     time.sleep(wait)
                     continue
                 logger.info("Could not resolve metadata for %s: %s", video_id, exc)
@@ -688,6 +714,14 @@ def _fetch_ytdlp_captions(video_id: str) -> TranscriptResult | None:
                                 max_retries,
                                 wait,
                             )
+                            from wow_core.fetch_status import active_progress
+
+                            prog = active_progress()
+                            if prog:
+                                prog.update(
+                                    "wait",
+                                    f"Rate limited (captions {video_id}); waiting {wait:.0f}s",
+                                )
                             time.sleep(wait)
                             continue
                         logger.warning("yt-dlp captions failed for %s: %s", video_id, exc)

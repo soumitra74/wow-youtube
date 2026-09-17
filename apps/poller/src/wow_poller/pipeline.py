@@ -18,6 +18,7 @@ from wow_core.db import (
     upsert_seen,
 )
 from wow_core.digest import write_digest
+from wow_core.fetch_status import FetchProgress, active_progress
 from wow_core.logging_setup import configure_poller_logging
 from wow_core.youtube import (
     TranscriptUnavailable,
@@ -153,17 +154,29 @@ def run_latest(*, retry_errors: bool = False) -> dict[str, int]:
     settings.ensure_data_dirs()
     init_db()
 
+    prog = active_progress()
+
     process_cap = settings.YOUTUBE_NOTIFICATIONS_LIMIT
     videos = merge_inbox_and_playlist_videos()
     processed: list[dict[str, Any]] = []
     processed_n = skipped_n = failed_n = 0
     scanned_n = 0
+    total = len(videos)
 
     for video in videos:
         if process_cap > 0 and processed_n >= process_cap:
+            if prog:
+                prog.update("process", f"Hit process limit ({process_cap}); stopping early")
             break
         scanned_n += 1
+        if prog:
+            prog.update(
+                "process",
+                f"Video {scanned_n}/{total}: {video.title[:80]} ({video.video_id})",
+            )
         if not (video.published_date or "").strip():
+            if prog:
+                prog.update("metadata", f"Resolving publish date for {video.video_id}…")
             patch_published_date_if_missing(video.video_id)
         channel_name = video.channel_name or video.channel_id
         sync_channels([{"channel_id": video.channel_id, "channel_name": channel_name}])
@@ -171,6 +184,7 @@ def run_latest(*, retry_errors: bool = False) -> dict[str, int]:
             video,
             {"channel_id": video.channel_id, "channel_name": channel_name},
             retry_errors=retry_errors,
+            progress=prog,
         )
         if result == "processed":
             processed_n += 1
@@ -202,7 +216,13 @@ def run_latest(*, retry_errors: bool = False) -> dict[str, int]:
     }
 
 
-def _process_video(video: Any, channel: dict[str, Any], *, retry_errors: bool) -> str:
+def _process_video(
+    video: Any,
+    channel: dict[str, Any],
+    *,
+    retry_errors: bool,
+    progress: FetchProgress | None = None,
+) -> str:
     seen = get_seen(video.video_id)
     if seen:
         status = seen["status"]
@@ -221,7 +241,11 @@ def _process_video(video: Any, channel: dict[str, Any], *, retry_errors: bool) -
 
     logger.info("Processing %s (%s)", video.title, video.video_id)
     try:
+        if progress:
+            progress.update("transcript", f"Fetching transcript for {video.video_id}…")
         transcript = get_transcript(video.video_id)
+        if progress:
+            progress.update("summarize", f"Summarizing {video.video_id} via Claude…")
         text, truncated = truncate_transcript(transcript.text)
         if truncated:
             logger.warning("Truncated transcript for %s to %s chars", video.video_id, len(text))

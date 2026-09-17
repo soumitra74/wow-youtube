@@ -87,7 +87,7 @@ def test_run_latest_upserts_channels_and_processes_notifications(tmp_path: Path,
     )
     processed: list[tuple[str, str]] = []
 
-    def fake_process(video, channel, *, retry_errors):
+    def fake_process(video, channel, *, retry_errors, progress=None):
         processed.append((video.video_id, channel["channel_id"]))
         return "processed" if video.video_id == "new1" else "skipped"
 

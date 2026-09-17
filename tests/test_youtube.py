@@ -447,6 +447,47 @@ def test_fetch_youtube_captions_returns_none_when_ip_blocked(monkeypatch) -> Non
     assert _fetch_youtube_captions("aaaaaaaaaaa") is None
 
 
+def test_fetch_ytdlp_captions_retries_on_429(tmp_path: Path, monkeypatch) -> None:
+    cookies = tmp_path / "youtube_cookies.txt"
+    _write_login_cookies(cookies)
+    monkeypatch.setattr("wow_core.settings.YOUTUBE_COOKIES_PATH", cookies)
+    monkeypatch.setattr("wow_core.settings.CAPTION_RATE_LIMIT_RETRIES", 2)
+    monkeypatch.setattr("wow_core.settings.CAPTION_RATE_LIMIT_BACKOFF_SECONDS", 0.01)
+    monkeypatch.setattr("wow_core.youtube._throttle_captions", lambda **kwargs: None)
+    calls = {"n": 0}
+
+    class FakeResp:
+        def read(self):
+            return json.dumps({"events": [{"segs": [{"utf8": "ok"}]}]}).encode()
+
+    class FakeYDL:
+        def __init__(self, opts):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=False):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise Exception("HTTP Error 429: Too Many Requests")
+            return {
+                "subtitles": {"en": [{"ext": "json3", "url": "https://example/json3"}]},
+            }
+
+        def urlopen(self, url):
+            return FakeResp()
+
+    monkeypatch.setattr("wow_core.youtube._youtube_dl", lambda: type("M", (), {"YoutubeDL": FakeYDL})())
+    result = _fetch_ytdlp_captions("aaaaaaaaaaa")
+    assert result is not None
+    assert result.text == "ok"
+    assert calls["n"] == 3
+
+
 def test_fetch_ytdlp_captions_uses_cookies_and_manual_json3(tmp_path: Path, monkeypatch) -> None:
     cookies = tmp_path / "youtube_cookies.txt"
     _write_login_cookies(cookies)
