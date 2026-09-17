@@ -3,16 +3,21 @@ from __future__ import annotations
 from pathlib import Path
 
 from wow_core.db import (
+    create_oauth_session,
+    create_or_update_oauth_user,
+    get_oauth_user_by_session,
     get_seen,
     get_video,
     init_db,
     insert_video,
     list_channels,
+    list_watchlater_items,
     query_videos,
     set_watched,
     sync_channels,
     topic_trends,
     upsert_seen,
+    upsert_watchlater_item,
 )
 
 
@@ -103,6 +108,43 @@ def test_error_seen_can_be_updated(tmp_path: Path) -> None:
     upsert_seen(video_id="vid2", channel_id="chan1", status="error", error_message="boom", db_path=path)
     upsert_seen(video_id="vid2", channel_id="chan1", status="processed", db_path=path)
     assert get_seen("vid2", db_path=path)["status"] == "processed"
+
+
+def test_watchlater_oauth_and_date_filter(tmp_path: Path) -> None:
+    path = tmp_path / "wow.db"
+    init_db(path)
+    user = create_or_update_oauth_user(
+        google_id="sub123",
+        email="me@example.com",
+        refresh_token="rt",
+        db_path=path,
+    )
+    create_oauth_session(user_id=user["id"], token="sess1", db_path=path)
+    assert get_oauth_user_by_session("sess1", db_path=path)["google_id"] == "sub123"
+
+    upsert_watchlater_item(
+        user_id=user["id"],
+        video_id="abc",
+        title="Old",
+        added_at="2026-01-01T00:00:00+00:00",
+        db_path=path,
+    )
+    upsert_watchlater_item(
+        user_id=user["id"],
+        video_id="def",
+        title="Recent",
+        added_at="2026-08-15T00:00:00+00:00",
+        db_path=path,
+    )
+    all_items = list_watchlater_items(user_id=user["id"], db_path=path)
+    assert len(all_items) == 2
+    filtered = list_watchlater_items(
+        user_id=user["id"],
+        date_from="2026-08-01T00:00:00+00:00",
+        db_path=path,
+    )
+    assert len(filtered) == 1
+    assert filtered[0]["video_id"] == "def"
 
 
 def test_topic_trends_buckets(tmp_path: Path) -> None:

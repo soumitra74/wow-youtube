@@ -57,6 +57,37 @@ CREATE INDEX IF NOT EXISTS idx_videos_published_date ON videos(published_date);
 CREATE INDEX IF NOT EXISTS idx_videos_channel_id     ON videos(channel_id);
 CREATE INDEX IF NOT EXISTS idx_videos_relevance      ON videos(relevance);
 CREATE INDEX IF NOT EXISTS idx_seen_status           ON seen(status);
+
+CREATE TABLE IF NOT EXISTS oauth_users (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    google_id      TEXT NOT NULL UNIQUE,
+    email          TEXT,
+    refresh_token  TEXT,
+    created_at     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS oauth_sessions (
+    token       TEXT PRIMARY KEY,
+    user_id     INTEGER NOT NULL,
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT,
+    FOREIGN KEY (user_id) REFERENCES oauth_users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS watchlater_items (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL,
+    video_id    TEXT NOT NULL,
+    title       TEXT,
+    thumbnail   TEXT,
+    etag        TEXT,
+    added_at    TEXT,
+    stored_at   TEXT NOT NULL,
+    UNIQUE (user_id, video_id),
+    FOREIGN KEY (user_id) REFERENCES oauth_users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_watchlater_user_added ON watchlater_items(user_id, added_at);
 """
 
 
@@ -369,3 +400,150 @@ def _video_row(row: sqlite3.Row) -> dict[str, Any]:
     data["topics"] = json.loads(data["topics"])
     data["watched"] = bool(data["watched"])
     return data
+
+
+def create_or_update_oauth_user(
+    *,
+    google_id: str,
+    email: str | None = None,
+    refresh_token: str | None = None,
+    db_path: Path | None = None,
+) -> dict[str, Any]:
+    now = utc_now()
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM oauth_users WHERE google_id = ?",
+            (google_id,),
+        ).fetchone()
+        if row:
+            conn.execute(
+                """
+                UPDATE oauth_users
+                SET email = COALESCE(?, email),
+                    refresh_token = COALESCE(?, refresh_token)
+                WHERE google_id = ?
+                """,
+                (email, refresh_token, google_id),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO oauth_users (google_id, email, refresh_token, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (google_id, email, refresh_token, now),
+            )
+        out = conn.execute(
+            "SELECT * FROM oauth_users WHERE google_id = ?",
+            (google_id,),
+        ).fetchone()
+    return dict(out)
+
+
+def get_oauth_user_by_google_id(google_id: str, db_path: Path | None = None) -> dict[str, Any] | None:
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM oauth_users WHERE google_id = ?",
+            (google_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def create_oauth_session(
+    *,
+    user_id: int,
+    token: str,
+    ttl_seconds: int = 7 * 24 * 3600,
+    db_path: Path | None = None,
+) -> None:
+    now = utc_now()
+    expires = (
+        datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+    ).replace(microsecond=0).isoformat()
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO oauth_sessions (token, user_id, created_at, expires_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (token, user_id, now, expires),
+        )
+
+
+def get_oauth_user_by_session(token: str, db_path: Path | None = None) -> dict[str, Any] | None:
+    with connect(db_path) as conn:
+        sess = conn.execute(
+            "SELECT user_id, expires_at FROM oauth_sessions WHERE token = ?",
+            (token,),
+        ).fetchone()
+        if not sess:
+            return None
+        if sess["expires_at"]:
+            exp = datetime.fromisoformat(sess["expires_at"])
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if exp < datetime.now(timezone.utc):
+                conn.execute("DELETE FROM oauth_sessions WHERE token = ?", (token,))
+                return None
+        row = conn.execute(
+            "SELECT * FROM oauth_users WHERE id = ?",
+            (sess["user_id"],),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_watchlater_item(
+    *,
+    user_id: int,
+    video_id: str,
+    title: str | None = None,
+    thumbnail: str | None = None,
+    etag: str | None = None,
+    added_at: str | None = None,
+    db_path: Path | None = None,
+) -> None:
+    now = utc_now()
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO watchlater_items (
+                user_id, video_id, title, thumbnail, etag, added_at, stored_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, video_id) DO UPDATE SET
+                title = COALESCE(excluded.title, watchlater_items.title),
+                thumbnail = COALESCE(excluded.thumbnail, watchlater_items.thumbnail),
+                etag = COALESCE(excluded.etag, watchlater_items.etag),
+                added_at = COALESCE(excluded.added_at, watchlater_items.added_at),
+                stored_at = excluded.stored_at
+            """,
+            (user_id, video_id, title, thumbnail, etag, added_at, now),
+        )
+
+
+def list_watchlater_items(
+    *,
+    user_id: int,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 200,
+    db_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    clauses = ["user_id = ?"]
+    params: list[Any] = [user_id]
+    if date_from:
+        clauses.append("added_at >= ?")
+        params.append(date_from)
+    if date_to:
+        clauses.append("added_at <= ?")
+        params.append(date_to)
+    params.append(limit)
+    sql = f"""
+        SELECT video_id, title, thumbnail, etag, added_at, stored_at
+        FROM watchlater_items
+        WHERE {' AND '.join(clauses)}
+        ORDER BY added_at DESC, stored_at DESC
+        LIMIT ?
+    """
+    with connect(db_path) as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(row) for row in rows]

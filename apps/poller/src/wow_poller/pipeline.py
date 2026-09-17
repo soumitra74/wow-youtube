@@ -22,8 +22,8 @@ from wow_core.logging_setup import configure_poller_logging
 from wow_core.youtube import (
     TranscriptUnavailable,
     fetch_channel_feed,
-    fetch_notification_videos,
     get_transcript,
+    merge_inbox_and_playlist_videos,
     patch_published_date_if_missing,
     truncate_transcript,
     _resolve_video_metadata,
@@ -153,9 +153,8 @@ def run_latest(*, retry_errors: bool = False) -> dict[str, int]:
     settings.ensure_data_dirs()
     init_db()
 
-    scan_cap = settings.YOUTUBE_NOTIFICATIONS_SCAN_LIMIT
     process_cap = settings.YOUTUBE_NOTIFICATIONS_LIMIT
-    videos = fetch_notification_videos(scan_limit=scan_cap)
+    videos = merge_inbox_and_playlist_videos()
     processed: list[dict[str, Any]] = []
     processed_n = skipped_n = failed_n = 0
     scanned_n = 0
@@ -186,7 +185,7 @@ def run_latest(*, retry_errors: bool = False) -> dict[str, int]:
     if processed:
         write_digest(processed)
     logger.info(
-        "Notification fetch: scanned %s/%s inbox rows, %s processed, %s skipped, %s failed",
+        "Inbox/playlist fetch: scanned %s/%s candidates, %s processed, %s skipped, %s failed",
         scanned_n,
         len(videos),
         processed_n,

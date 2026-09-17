@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from wow_core.youtube import (
+    FeedVideo,
     NotificationAuthError,
     TranscriptResult,
     TranscriptUnavailable,
@@ -25,6 +26,9 @@ from wow_core.youtube import (
     _youtube_player_clients,
     _YtDlpWarningLogger,
     fetch_notification_videos,
+    fetch_playlist_videos,
+    fetch_watch_later_videos,
+    merge_inbox_and_playlist_videos,
     get_transcript,
     notification_entries_to_videos,
     truncate_transcript,
@@ -183,6 +187,71 @@ def test_fetch_notification_videos_uses_env_limit_and_cookies(tmp_path: Path, mo
     assert captured["opts"]["cookiefile"] != str(cookies)
     assert cookies.read_text(encoding="utf-8") == original
     assert [v.video_id for v in videos] == ["aaaaaaaaaaa"]
+
+
+def test_fetch_watch_later_videos_uses_playlist_url(tmp_path: Path, monkeypatch) -> None:
+    cookies = tmp_path / "youtube_cookies.txt"
+    _write_login_cookies(cookies)
+    monkeypatch.setattr("wow_core.settings.YOUTUBE_COOKIES_PATH", cookies)
+    monkeypatch.setattr("wow_core.settings.YOUTUBE_WATCH_LATER_SCAN_LIMIT", 5)
+    captured: dict = {}
+    monkeypatch.setattr("wow_core.youtube._youtube_dl", lambda: _fake_ydl(captured, rewrite=True))
+    videos = fetch_watch_later_videos()
+    assert "playlist?list=WL" in captured["url"]
+    assert captured["opts"]["playlistend"] == 5
+    assert [v.video_id for v in videos] == ["aaaaaaaaaaa"]
+
+
+def test_merge_inbox_and_playlist_videos_dedupes(tmp_path: Path, monkeypatch) -> None:
+    cookies = tmp_path / "youtube_cookies.txt"
+    _write_login_cookies(cookies)
+    monkeypatch.setattr("wow_core.settings.YOUTUBE_COOKIES_PATH", cookies)
+    monkeypatch.setattr(
+        "wow_core.youtube.fetch_notification_videos",
+        lambda scan_limit=None: [
+            FeedVideo(
+                video_id="aaaaaaaaaaa",
+                title="Inbox",
+                published_date="",
+                url="",
+                channel_id="UC1",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "wow_core.youtube.fetch_watch_later_videos",
+        lambda scan_limit=None: [
+            FeedVideo(
+                video_id="aaaaaaaaaaa",
+                title="Dup",
+                published_date="",
+                url="",
+                channel_id="UC1",
+            ),
+            FeedVideo(
+                video_id="bbbbbbbbbbb",
+                title="WL only",
+                published_date="",
+                url="",
+                channel_id="UC2",
+            ),
+        ],
+    )
+    monkeypatch.setattr("wow_core.settings.YOUTUBE_FETCH_WATCH_LATER", True)
+    monkeypatch.setattr("wow_core.settings.YOUTUBE_EXTRA_PLAYLIST_IDS", [])
+    merged = merge_inbox_and_playlist_videos()
+    assert [v.video_id for v in merged] == ["aaaaaaaaaaa", "bbbbbbbbbbb"]
+
+
+def test_fetch_playlist_videos_custom_id(tmp_path: Path, monkeypatch) -> None:
+    cookies = tmp_path / "youtube_cookies.txt"
+    _write_login_cookies(cookies)
+    monkeypatch.setattr("wow_core.settings.YOUTUBE_COOKIES_PATH", cookies)
+    captured: dict = {}
+    monkeypatch.setattr("wow_core.youtube._youtube_dl", lambda: _fake_ydl(captured))
+    fetch_playlist_videos("PLcustom123", scan_limit=2)
+    assert captured["url"] == "https://www.youtube.com/playlist?list=PLcustom123"
+    assert captured["opts"]["playlistend"] == 2
 
 
 def test_fetch_notification_videos_requires_cookies(tmp_path: Path, monkeypatch) -> None:

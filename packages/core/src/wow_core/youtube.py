@@ -227,18 +227,28 @@ def _whisper_cookie_attempts(cookiefile: str | None) -> list[str | None]:
     return [None]
 
 
+def _is_rate_limited_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return "429" in text or "too many requests" in text
+
+
+def _rate_limit_backoff_seconds(attempt: int) -> float:
+    base = float(settings.CAPTION_RATE_LIMIT_BACKOFF_SECONDS)
+    return base * (2**attempt)
+
+
 def _is_retryable_ytdlp_error(exc: BaseException) -> bool:
     text = str(exc).lower()
     return (
         "page needs to be reloaded" in text
         or "requested format is not available" in text
         or "http error 403" in text
+        or _is_rate_limited_error(exc)
     )
 
 
-def fetch_notification_videos(*, scan_limit: int | None = None) -> list[FeedVideo]:
-    """Latest videos from the signed-in YouTube notification inbox."""
-    n = settings.YOUTUBE_NOTIFICATIONS_SCAN_LIMIT if scan_limit is None else scan_limit
+def _fetch_ytdlp_playlist_listing(extract_target: str, *, scan_limit: int) -> dict[str, Any]:
+    """Authenticated flat playlist extract (notifications pseudo-playlist or ?list= URL)."""
     cookies = Path(settings.YOUTUBE_COOKIES_PATH)
     if not cookies.exists():
         raise NotificationAuthError(
@@ -252,12 +262,12 @@ def fetch_notification_videos(*, scan_limit: int | None = None) -> list[FeedVide
             **_ytdlp_core_opts(),
             "skip_download": True,
             "extract_flat": True,
-            "playlistend": n,
+            "playlistend": scan_limit,
             "cookiefile": cookie_copy,
         }
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(":ytnotif", download=False) or {}
+                return ydl.extract_info(extract_target, download=False) or {}
         except Exception as exc:
             if _is_youtube_login_error(exc):
                 raise NotificationAuthError(
@@ -265,7 +275,53 @@ def fetch_notification_videos(*, scan_limit: int | None = None) -> list[FeedVide
                     + _COOKIE_EXPORT_HINT
                 ) from exc
             raise
+
+
+def fetch_playlist_videos(
+    playlist_id: str,
+    *,
+    scan_limit: int | None = None,
+) -> list[FeedVideo]:
+    """Videos from a YouTube playlist the signed-in account can read (including WL)."""
+    pid = playlist_id.strip()
+    if not pid:
+        return []
+    n = settings.YOUTUBE_PLAYLIST_SCAN_LIMIT if scan_limit is None else scan_limit
+    url = f"https://www.youtube.com/playlist?list={pid}"
+    info = _fetch_ytdlp_playlist_listing(url, scan_limit=n)
     return notification_entries_to_videos(info, limit=n, resolve_metadata=_resolve_video_metadata)
+
+
+def fetch_watch_later_videos(*, scan_limit: int | None = None) -> list[FeedVideo]:
+    n = settings.YOUTUBE_WATCH_LATER_SCAN_LIMIT if scan_limit is None else scan_limit
+    return fetch_playlist_videos("WL", scan_limit=n)
+
+
+def fetch_notification_videos(*, scan_limit: int | None = None) -> list[FeedVideo]:
+    """Latest videos from the signed-in YouTube notification inbox."""
+    n = settings.YOUTUBE_NOTIFICATIONS_SCAN_LIMIT if scan_limit is None else scan_limit
+    info = _fetch_ytdlp_playlist_listing(":ytnotif", scan_limit=n)
+    return notification_entries_to_videos(info, limit=n, resolve_metadata=_resolve_video_metadata)
+
+
+def merge_inbox_and_playlist_videos() -> list[FeedVideo]:
+    """Notification inbox plus configured playlists (Watch Later and extras), de-duplicated."""
+    videos = fetch_notification_videos()
+    seen = {v.video_id for v in videos}
+
+    if settings.YOUTUBE_FETCH_WATCH_LATER:
+        for video in fetch_watch_later_videos():
+            if video.video_id not in seen:
+                videos.append(video)
+                seen.add(video.video_id)
+
+    for playlist_id in settings.YOUTUBE_EXTRA_PLAYLIST_IDS:
+        for video in fetch_playlist_videos(playlist_id):
+            if video.video_id not in seen:
+                videos.append(video)
+                seen.add(video.video_id)
+
+    return videos
 
 
 def notification_entries_to_videos(
@@ -363,24 +419,40 @@ def _dict_published_date(entry: dict[str, Any]) -> str:
 
 def _resolve_video_metadata(video_id: str) -> ResolvedVideoMeta | None:
     yt_dlp = _youtube_dl()
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    max_retries = settings.CAPTION_RATE_LIMIT_RETRIES
     with _copied_cookiefile() as cookie_copy:
         opts = _ytdlp_video_opts(
             cookiefile=cookie_copy,
             skip_download=True,
             ignore_no_formats_error=True,
         )
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False) or {}
-        except Exception as exc:
-            logger.info("Could not resolve metadata for %s: %s", video_id, exc)
-            return None
-    return ResolvedVideoMeta(
-        channel_id=_dict_channel_id(info),
-        published_date=_dict_published_date(info),
-        channel_name=_dict_channel_name(info),
-        title=str(info.get("title") or ""),
-    )
+        for attempt in range(max_retries + 1):
+            _throttle_captions()
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=False) or {}
+                return ResolvedVideoMeta(
+                    channel_id=_dict_channel_id(info),
+                    published_date=_dict_published_date(info),
+                    channel_name=_dict_channel_name(info),
+                    title=str(info.get("title") or ""),
+                )
+            except Exception as exc:
+                if _is_rate_limited_error(exc) and attempt < max_retries:
+                    wait = _rate_limit_backoff_seconds(attempt)
+                    logger.warning(
+                        "Rate limited resolving metadata for %s; retry %s/%s in %ss",
+                        video_id,
+                        attempt + 1,
+                        max_retries,
+                        wait,
+                    )
+                    time.sleep(wait)
+                    continue
+                logger.info("Could not resolve metadata for %s: %s", video_id, exc)
+                return None
+    return None
 
 
 def _resolve_channel_id(video_id: str) -> str | None:
@@ -595,20 +667,33 @@ def _select_caption_format(formats: list[dict[str, Any]]) -> dict[str, Any] | No
 def _fetch_ytdlp_captions(video_id: str) -> TranscriptResult | None:
     yt_dlp = _youtube_dl()
     url = f"https://www.youtube.com/watch?v={video_id}"
+    max_retries = settings.CAPTION_RATE_LIMIT_RETRIES
     try:
         with _copied_cookiefile() as cookiefile:
             attempts: list[str | None] = [cookiefile]
             if cookiefile:
                 attempts.append(None)
             for cookies in attempts:
-                try:
-                    result = _fetch_ytdlp_captions_once(yt_dlp, url, cookies)
-                except Exception as exc:
-                    logger.warning("yt-dlp captions failed for %s: %s", video_id, exc)
-                    if cookies is not None and _is_retryable_ytdlp_error(exc):
-                        continue
-                    return None
-                return result
+                for attempt in range(max_retries + 1):
+                    try:
+                        _throttle_captions()
+                        return _fetch_ytdlp_captions_once(yt_dlp, url, cookies)
+                    except Exception as exc:
+                        if _is_rate_limited_error(exc) and attempt < max_retries:
+                            wait = _rate_limit_backoff_seconds(attempt)
+                            logger.warning(
+                                "Rate limited (yt-dlp captions) for %s; retry %s/%s in %ss",
+                                video_id,
+                                attempt + 1,
+                                max_retries,
+                                wait,
+                            )
+                            time.sleep(wait)
+                            continue
+                        logger.warning("yt-dlp captions failed for %s: %s", video_id, exc)
+                        if cookies is not None and _is_retryable_ytdlp_error(exc):
+                            break
+                        return None
     except Exception as exc:
         logger.warning("yt-dlp captions failed for %s: %s", video_id, exc)
         return None

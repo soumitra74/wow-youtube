@@ -47,6 +47,11 @@ GENERATE_MISSING_TRANSCRIPTS = os.getenv(
     "GENERATE_MISSING_TRANSCRIPTS", "true"
 ).lower() in {"1", "true", "yes", "on"}
 CAPTION_REQUEST_DELAY_SECONDS = float(os.getenv("CAPTION_REQUEST_DELAY_SECONDS", "3"))
+# Retries when YouTube returns HTTP 429 during caption/metadata fetches
+CAPTION_RATE_LIMIT_RETRIES = int(os.getenv("CAPTION_RATE_LIMIT_RETRIES", "3"))
+CAPTION_RATE_LIMIT_BACKOFF_SECONDS = float(
+    os.getenv("CAPTION_RATE_LIMIT_BACKOFF_SECONDS", "15")
+)
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 WHISPER_MAX_MINUTES = int(os.getenv("WHISPER_MAX_MINUTES", "90"))
 WHISPER_SHARD_MINUTES = int(os.getenv("WHISPER_SHARD_MINUTES", "10"))
@@ -58,6 +63,20 @@ YOUTUBE_NOTIFICATIONS_LIMIT = int(os.getenv("YOUTUBE_NOTIFICATIONS_LIMIT", "10")
 YOUTUBE_NOTIFICATIONS_SCAN_LIMIT = int(
     os.getenv("YOUTUBE_NOTIFICATIONS_SCAN_LIMIT", "40")
 )
+YOUTUBE_FETCH_WATCH_LATER = os.getenv("YOUTUBE_FETCH_WATCH_LATER", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+YOUTUBE_WATCH_LATER_SCAN_LIMIT = int(os.getenv("YOUTUBE_WATCH_LATER_SCAN_LIMIT", "40"))
+YOUTUBE_PLAYLIST_SCAN_LIMIT = int(os.getenv("YOUTUBE_PLAYLIST_SCAN_LIMIT", "40"))
+# Additional playlist IDs (comma-separated), e.g. PLxxx. Watch Later (WL) is controlled separately.
+YOUTUBE_EXTRA_PLAYLIST_IDS = [
+    part.strip()
+    for part in os.getenv("YOUTUBE_EXTRA_PLAYLIST_IDS", "").split(",")
+    if part.strip()
+]
 # 0 = unlimited. Default keeps scheduled polls from eating the full RSS backlog.
 POLL_LIMIT = int(os.getenv("POLL_LIMIT", "10"))
 POLL_MAX_AGE_DAYS = int(os.getenv("POLL_MAX_AGE_DAYS", "3"))

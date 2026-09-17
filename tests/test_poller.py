@@ -65,8 +65,8 @@ def test_process_retries_error_rows(tmp_path: Path, monkeypatch) -> None:
 def test_run_latest_upserts_channels_and_processes_notifications(tmp_path: Path, monkeypatch) -> None:
     _prepare(tmp_path, monkeypatch)
     monkeypatch.setattr(
-        "wow_poller.pipeline.fetch_notification_videos",
-        lambda scan_limit=None: [
+        "wow_poller.pipeline.merge_inbox_and_playlist_videos",
+        lambda: [
             FeedVideo(
                 video_id="new1",
                 title="From inbox",
