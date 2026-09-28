@@ -18,7 +18,11 @@ torch = { index = "pytorch-cpu" }
 members = ["apps/api", "apps/poller", "packages/core"]
 
 [dependency-groups]
-dev = ["pytest>=8.3", "httpx>=0.28"]
+dev = [
+    "pytest>=8.3",
+ "httpx>=0.28",
+ "pytest-playwright>=0.7",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -26,4 +30,7 @@ pythonpath = [
     "packages/core/src",
     "apps/poller/src",
     "apps/api/src",
+]
+markers = [
+    "e2e: browser end-to-end tests (run with pytest --e2e or pytest tests/e2e)",
 ]
