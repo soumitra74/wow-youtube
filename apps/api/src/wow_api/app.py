@@ -13,12 +13,21 @@ from pydantic import BaseModel, Field
 
 from wow_core import settings
 from wow_core.logging_setup import configure_server_logging
-from wow_core.chroma_store import query_similar
+from wow_core.chroma_store import delete_summary, query_similar
 from wow_core.claude_client import ask_across_videos
-from wow_core.db import get_videos_by_ids, init_db, list_channels, query_videos, set_watched, topic_trends
+from wow_core.db import (
+    delete_video,
+    get_video,
+    get_videos_by_ids,
+    init_db,
+    list_channels,
+    query_videos,
+    set_watched,
+    topic_trends,
+)
 from wow_core.fetch_status import get_fetch_progress
 from wow_core.youtube import NotificationAuthError
-from wow_poller.pipeline import run_latest
+from wow_poller.pipeline import run_fetch_url, run_latest
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -89,6 +98,30 @@ def api_videos(
     )
 
 
+@app.get("/api/videos/{video_id}")
+def api_video(video_id: str) -> dict[str, Any]:
+    video = get_video(video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail="video not found")
+    return video
+
+
+@app.delete("/api/videos/{video_id}", status_code=204)
+def api_delete_video(video_id: str) -> Response:
+    if get_video(video_id) is None:
+        raise HTTPException(status_code=404, detail="video not found")
+    try:
+        delete_summary(video_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="could not remove video from semantic index",
+        ) from exc
+    if not delete_video(video_id):
+        raise HTTPException(status_code=404, detail="video not found")
+    return Response(status_code=204)
+
+
 @app.get("/api/search/semantic")
 def api_semantic(q: str, k: int | None = None) -> list[dict[str, Any]]:
     query = q.strip()
@@ -138,6 +171,17 @@ def _run_fetch_job() -> None:
         progress.fail(f"YouTube fetch failed: {exc}")
 
 
+def _run_fetch_url_job(url: str) -> None:
+    progress = get_fetch_progress()
+    try:
+        result = run_fetch_url(url)
+        progress.complete(result)
+    except ValueError as exc:
+        progress.fail(str(exc))
+    except Exception as exc:
+        progress.fail(f"YouTube fetch failed: {exc}")
+
+
 @app.get("/api/fetch-status")
 def api_fetch_status() -> dict[str, Any]:
     return get_fetch_progress().snapshot()
@@ -153,6 +197,31 @@ def api_fetch_latest() -> JSONResponse:
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     threading.Thread(target=_run_fetch_job, name="fetch-latest", daemon=True).start()
+    return JSONResponse({"started": True}, status_code=202)
+
+
+class FetchUrlBody(BaseModel):
+    url: str = Field(min_length=1)
+
+
+@app.post("/api/fetch-url")
+def api_fetch_url(body: FetchUrlBody) -> JSONResponse:
+    url = body.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+    progress = get_fetch_progress()
+    if progress.is_running():
+        raise HTTPException(status_code=409, detail="Fetch already in progress")
+    try:
+        progress.begin()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    threading.Thread(
+        target=_run_fetch_url_job,
+        args=(url,),
+        name="fetch-url",
+        daemon=True,
+    ).start()
     return JSONResponse({"started": True}, status_code=202)
 
 

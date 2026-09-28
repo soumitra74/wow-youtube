@@ -3,6 +3,7 @@ You are summarizing a YouTube video for a personal research archive.
 Return ONLY valid JSON matching this schema (no markdown, no extra keys):
 {
   "summary": string,
+  "long_summary": string,
   "key_takeaways": string[],
   "topics": string[],
   "estimated_relevance": "high" | "medium" | "low"
@@ -10,6 +11,9 @@ Return ONLY valid JSON matching this schema (no markdown, no extra keys):
 
 Rules:
 - summary: 2–4 sentences covering the video's main argument or demonstration. No clickbait tone.
+- long_summary: approximately 1,000 words. Give a coherent, detailed account of the
+  video's argument, evidence, examples, demonstrations, and conclusions. Use short
+  section headings where helpful, but do not pad or repeat points to reach the target.
 - key_takeaways: 3–6 concrete bullets. Prefer facts, techniques, claims, and numbers over vague praise.
 - topics: 2–4 short tags from this controlled vocabulary when they fit; otherwise invent a short lowercase tag:
   ai-agents, llms, coding, space, physics, math, biology, health, history,

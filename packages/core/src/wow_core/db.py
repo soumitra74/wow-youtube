@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS videos (
     published_date     TEXT NOT NULL,
     url                TEXT NOT NULL,
     transcript_length  INTEGER,
+    transcript         TEXT,
     summary            TEXT NOT NULL,
+    long_summary       TEXT,
     key_takeaways      TEXT NOT NULL,
     topics             TEXT NOT NULL,
     relevance          TEXT NOT NULL CHECK (relevance IN ('high', 'medium', 'low')),
@@ -119,6 +121,10 @@ def connect(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
 def init_db(db_path: Path | None = None) -> None:
     with connect(db_path) as conn:
         conn.executescript(SCHEMA)
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(videos)")}
+        for name in ("transcript", "long_summary"):
+            if name not in columns:
+                conn.execute(f"ALTER TABLE videos ADD COLUMN {name} TEXT")
 
 
 def sync_channels(channels: list[dict[str, str]], db_path: Path | None = None) -> int:
@@ -207,7 +213,9 @@ def insert_video(
     published_date: str,
     url: str,
     transcript_length: int,
+    transcript: str,
     summary: str,
+    long_summary: str,
     key_takeaways: list[str],
     topics: list[str],
     relevance: Relevance,
@@ -218,15 +226,17 @@ def insert_video(
             """
             INSERT INTO videos (
                 video_id, channel_id, title, published_date, url,
-                transcript_length, summary, key_takeaways, topics,
-                relevance, processed_date, watched
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                transcript_length, transcript, summary, long_summary,
+                key_takeaways, topics, relevance, processed_date, watched
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
             ON CONFLICT(video_id) DO UPDATE SET
                 title = excluded.title,
                 published_date = excluded.published_date,
                 url = excluded.url,
                 transcript_length = excluded.transcript_length,
+                transcript = excluded.transcript,
                 summary = excluded.summary,
+                long_summary = excluded.long_summary,
                 key_takeaways = excluded.key_takeaways,
                 topics = excluded.topics,
                 relevance = excluded.relevance,
@@ -239,7 +249,9 @@ def insert_video(
                 published_date,
                 url,
                 transcript_length,
+                transcript,
                 summary,
+                long_summary,
                 json.dumps(key_takeaways, ensure_ascii=False),
                 json.dumps(topics, ensure_ascii=False),
                 relevance,
@@ -284,6 +296,13 @@ def set_watched(video_id: str, watched: bool, db_path: Path | None = None) -> bo
         return cur.rowcount > 0
 
 
+def delete_video(video_id: str, db_path: Path | None = None) -> bool:
+    """Delete archived video data while retaining its seen marker."""
+    with connect(db_path) as conn:
+        cur = conn.execute("DELETE FROM videos WHERE video_id = ?", (video_id,))
+        return cur.rowcount > 0
+
+
 def get_video(video_id: str, db_path: Path | None = None) -> dict[str, Any] | None:
     with connect(db_path) as conn:
         row = conn.execute(
@@ -305,7 +324,10 @@ def get_videos_by_ids(video_ids: list[str], db_path: Path | None = None) -> list
     with connect(db_path) as conn:
         rows = conn.execute(
             f"""
-            SELECT v.*, c.channel_name
+            SELECT
+                v.video_id, v.channel_id, v.title, v.published_date, v.url,
+                v.transcript_length, v.summary, v.key_takeaways, v.topics,
+                v.relevance, v.processed_date, v.watched, c.channel_name
             FROM videos v
             JOIN channels c ON c.channel_id = v.channel_id
             WHERE v.video_id IN ({placeholders})
@@ -360,7 +382,10 @@ def query_videos(
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     sql = f"""
-        SELECT v.*, c.channel_name
+        SELECT
+            v.video_id, v.channel_id, v.title, v.published_date, v.url,
+            v.transcript_length, v.summary, v.key_takeaways, v.topics,
+            v.relevance, v.processed_date, v.watched, c.channel_name
         FROM videos v
         JOIN channels c ON c.channel_id = v.channel_id
         {where}

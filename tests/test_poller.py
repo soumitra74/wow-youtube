@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from wow_core.db import init_db, list_channels, sync_channels, upsert_seen
-from wow_core.youtube import FeedVideo, TranscriptUnavailable
+from wow_core.db import get_video, init_db, list_channels, sync_channels, upsert_seen
+from wow_core.youtube import FeedVideo, TranscriptResult, TranscriptUnavailable
 from wow_poller.pipeline import _process_video, run_latest, run_poll, video_is_fresh
 
 
@@ -60,6 +60,42 @@ def test_process_retries_error_rows(tmp_path: Path, monkeypatch) -> None:
     assert called["n"] == 0
     assert _process_video(video, {"channel_id": "chan1"}, retry_errors=True) == "skipped"
     assert called["n"] == 1
+
+
+def test_process_stores_full_transcript_and_long_summary(tmp_path: Path, monkeypatch) -> None:
+    _prepare(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "wow_poller.pipeline.get_transcript",
+        lambda _video_id: TranscriptResult(text="Complete transcript text.", source="manual"),
+    )
+    monkeypatch.setattr(
+        "wow_poller.pipeline.summarize_video",
+        lambda **_kwargs: {
+            "summary": "Short summary.",
+            "long_summary": "Detailed summary targeting one thousand words.",
+            "key_takeaways": ["A concrete point"],
+            "topics": ["education", "other"],
+            "estimated_relevance": "medium",
+        },
+    )
+    monkeypatch.setattr("wow_poller.pipeline.upsert_summary", lambda **_kwargs: None)
+    video = FeedVideo(
+        video_id="vid-detail",
+        title="Detailed video",
+        published_date="2026-08-22T00:00:00+00:00",
+        url="https://www.youtube.com/watch?v=vid-detail",
+        channel_id="chan1",
+    )
+
+    assert _process_video(
+        video,
+        {"channel_id": "chan1", "channel_name": "Demo"},
+        retry_errors=False,
+    ) == "processed"
+    stored = get_video("vid-detail")
+    assert stored is not None
+    assert stored["transcript"] == "Complete transcript text."
+    assert stored["long_summary"] == "Detailed summary targeting one thousand words."
 
 
 def test_run_latest_upserts_channels_and_processes_notifications(tmp_path: Path, monkeypatch) -> None:

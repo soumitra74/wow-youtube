@@ -52,6 +52,11 @@ def upsert_summary(
     )
 
 
+def delete_summary(video_id: str) -> None:
+    collection = _client()
+    collection.delete(ids=[video_id])
+
+
 def query_similar(text: str, *, top_k: int | None = None) -> list[dict[str, Any]]:
     collection = _client()
     k = settings.SEMANTIC_TOP_K if top_k is None else top_k

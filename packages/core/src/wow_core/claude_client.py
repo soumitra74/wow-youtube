@@ -37,7 +37,7 @@ def summarize_video(
         url=url,
         transcript=transcript,
     )
-    raw = _complete(settings.CLAUDE_SUMMARIZE_MODEL, prompt, max_tokens=2048)
+    raw = _complete(settings.CLAUDE_SUMMARIZE_MODEL, prompt, max_tokens=4096)
     parsed = _parse_json(raw)
     return _validate_summary(parsed)
 
@@ -111,6 +111,10 @@ def _validate_summary(data: dict[str, Any]) -> dict[str, Any]:
     if not summary:
         raise SummarizeError("summary is missing")
 
+    long_summary = str(data.get("long_summary") or "").strip()
+    if not long_summary:
+        raise SummarizeError("long_summary is missing")
+
     takeaways = data.get("key_takeaways") or []
     if not isinstance(takeaways, list):
         raise SummarizeError("key_takeaways must be an array")
@@ -130,6 +134,7 @@ def _validate_summary(data: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "summary": summary,
+        "long_summary": long_summary,
         "key_takeaways": takeaways,
         "topics": topics,
         "estimated_relevance": relevance,
