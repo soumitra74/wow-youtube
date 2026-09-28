@@ -3,9 +3,10 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.e2e.conftest import ORBITALS_TITLE, ROME_TITLE
-
 pytestmark = pytest.mark.e2e
+
+ORBITALS_TITLE = "Orbitals Explained"
+ROME_TITLE = "The Fall of Rome"
 
 
 def _open_browse(page: Page, live_server: str) -> None:
@@ -85,7 +86,7 @@ def test_semantic_search_renders_stubbed_hit(page: Page, live_server: str) -> No
     _open_browse(page, live_server)
     page.locator("nav").get_by_role("button", name="Semantic search").click()
     page.locator("#semantic-q").fill("orbital mechanics")
-    page.get_by_role("button", name="Search").click()
+    page.locator("#semantic-go").click()
     expect(page.locator("#semantic-status")).to_contain_text("results")
     expect(page.locator("#semantic-results")).to_contain_text(ORBITALS_TITLE)
 

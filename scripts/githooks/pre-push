@@ -1,0 +1,10 @@
+#!/bin/sh
+# Block pushes if browser e2e tests fail.
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+if ! command -v uv >/dev/null 2>&1; then
+  echo "pre-push: uv is required to run e2e tests" >&2
+  exit 1
+fi
+echo "pre-push: running e2e tests"
+uv run pytest tests/e2e

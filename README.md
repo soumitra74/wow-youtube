@@ -38,6 +38,17 @@ Already-seen rows are skipped and do not count toward `POLL_LIMIT`. Change the t
 
 Windows Task Scheduler can run `scripts\poll.bat`. The API container must already be up.
 
+## Tests
+
+```bash
+uv run pytest tests --ignore=tests/e2e   # unit tests (pre-commit)
+uv run playwright install chromium       # once per machine
+uv run pytest tests/e2e                  # browser e2e (pre-push)
+bash scripts/install-hooks.sh            # enable the git hooks
+```
+
+`pre-commit` runs the unit suite. `pre-push` runs the Playwright e2e suite. Bypass with `--no-verify` if you must.
+
 ## Layout
 
 - `apps/poller` — headless RSS → transcript → Claude → SQLite/Chroma → digest
