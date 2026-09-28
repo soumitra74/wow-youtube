@@ -16,6 +16,8 @@ docker compose up --build
 
 UI: http://localhost:8000
 
+Inbox sync (refresh icon) and **Fetch Now** for a YouTube URL share one background job—starting either while the other is running is rejected (HTTP 409); wait for the current run to finish, then retry the URL import if needed.
+
 `docker-compose.override.yml` bind-mounts `apps/`, `packages/`, `config/`, and `data/` and enables uvicorn `--reload`. Rebuild the image when Python dependencies change (includes Deno + `yt-dlp-ejs` for YouTube JS challenges). The image uses CPU PyTorch so Linux does not pull CUDA libraries.
 
 Runtime settings live in `.env` (copy from `.env.example`). Poll budget:
