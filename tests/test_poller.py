@@ -4,9 +4,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from wow_core.db import get_video, init_db, list_channels, sync_channels, upsert_seen
 from wow_core.youtube import FeedVideo, TranscriptResult, TranscriptUnavailable
-from wow_poller.pipeline import _process_video, run_latest, run_poll, video_is_fresh
+from wow_poller.pipeline import _process_video, run_fetch_url, run_latest, run_poll, video_is_fresh
 
 
 def _prepare(tmp_path: Path, monkeypatch) -> Path:
@@ -96,6 +98,53 @@ def test_process_stores_full_transcript_and_long_summary(tmp_path: Path, monkeyp
     assert stored is not None
     assert stored["transcript"] == "Complete transcript text."
     assert stored["long_summary"] == "Detailed summary targeting one thousand words."
+
+
+def test_run_fetch_url_rejects_invalid_url(tmp_path: Path, monkeypatch) -> None:
+    _prepare(tmp_path, monkeypatch)
+
+    with pytest.raises(ValueError, match="Invalid YouTube URL"):
+        run_fetch_url("not-a-url")
+
+
+def test_run_fetch_url_processes_valid_url(tmp_path: Path, monkeypatch) -> None:
+    _prepare(tmp_path, monkeypatch)
+    video_id = "abc123xyz78"
+    url = f"https://www.youtube.com/watch?v={video_id}"
+
+    monkeypatch.setattr(
+        "wow_poller.pipeline._resolve_video_metadata",
+        lambda _vid: SimpleNamespace(
+            channel_id="chan9",
+            channel_name="Resolved Channel",
+            published_date="2026-08-22T00:00:00+00:00",
+            title="Resolved title",
+        ),
+    )
+    monkeypatch.setattr("wow_poller.pipeline._process_video", lambda *_a, **_k: "processed")
+
+    result = run_fetch_url(url)
+
+    assert result["video_id"] == video_id
+    assert result["outcome"] == "processed"
+    assert result["processed"] == 1
+    assert {c["channel_id"] for c in list_channels()} == {"chan1", "chan9"}
+
+
+def test_run_fetch_url_requires_channel_id(tmp_path: Path, monkeypatch) -> None:
+    _prepare(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "wow_poller.pipeline._resolve_video_metadata",
+        lambda _vid: SimpleNamespace(
+            channel_id="",
+            channel_name="",
+            published_date="",
+            title="",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="Could not resolve channel"):
+        run_fetch_url("https://www.youtube.com/watch?v=abc123xyz78")
 
 
 def test_run_latest_upserts_channels_and_processes_notifications(tmp_path: Path, monkeypatch) -> None:
