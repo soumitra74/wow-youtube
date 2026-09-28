@@ -18,6 +18,10 @@ UI: http://localhost:8000
 
 Inbox sync (refresh icon) and **Fetch Now** for a YouTube URL share one background job—starting either while the other is running is rejected (HTTP 409); wait for the current run to finish, then retry the URL import if needed.
 
+During inbox scan, yt-dlp may log **Video unavailable** for old notification rows (deleted or non-video items); those are skipped. The UI status line should keep updating through scan → process; if it sits on one message for minutes, refresh cookies or lower `YOUTUBE_NOTIFICATIONS_SCAN_LIMIT`.
+
+**SyncRun API (`/api/videos`):** `POST` starts inbox sync (refresh icon in the UI). `GET` only reads job status—the UI polls it while a run is active; it does not start another sync. Archived videos are `GET /api/video` (singular).
+
 `docker-compose.override.yml` bind-mounts `apps/`, `packages/`, `config/`, and `data/` and enables uvicorn `--reload`. Rebuild the image when Python dependencies change (includes Deno + `yt-dlp-ejs` for YouTube JS challenges). The image uses CPU PyTorch so Linux does not pull CUDA libraries.
 
 Runtime settings live in `.env` (copy from `.env.example`). Poll budget:

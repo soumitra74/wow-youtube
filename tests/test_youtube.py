@@ -145,22 +145,36 @@ def test_notification_entries_to_videos_respects_limit_and_skips_non_videos() ->
     assert videos[1].url.endswith("bbbbbbbbbbb")
 
 
-def test_notification_entries_fills_published_date_from_metadata() -> None:
-    from wow_core.youtube import ResolvedVideoMeta
-
+def test_notification_entries_skips_metadata_when_channel_known() -> None:
     info = {
         "entries": [
             {"id": "aaaaaaaaaaa", "title": "No RSS date", "channel_id": "UCchan1", "channel": "A"},
         ]
     }
+
+    def should_not_resolve(_video_id: str) -> None:
+        raise AssertionError("metadata resolve should not run when channel_id is present")
+
     videos = notification_entries_to_videos(
         info,
         limit=10,
-        resolve_metadata=lambda video_id: ResolvedVideoMeta(
-            published_date="2026-09-10T12:00:00+00:00"
-        ),
+        resolve_metadata=should_not_resolve,  # type: ignore[arg-type]
     )
-    assert videos[0].published_date == "2026-09-10T12:00:00+00:00"
+    assert videos[0].published_date == ""
+
+
+def test_notification_entries_channel_id_from_channel_url() -> None:
+    info = {
+        "entries": [
+            {
+                "id": "aaaaaaaaaaa",
+                "title": "From channel url",
+                "url": "https://www.youtube.com/channel/UCchan9",
+            },
+        ]
+    }
+    videos = notification_entries_to_videos(info, limit=10)
+    assert videos[0].channel_id == "UCchan9"
 
 
 def test_notification_entries_dedupe_and_resolve_missing_channel_id() -> None:

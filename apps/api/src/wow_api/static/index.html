@@ -717,15 +717,54 @@
       return phase + (snapshot.message || "Working…") + sil;
     }
 
+    function parseSyncSnapshot(raw) {
+      if (Array.isArray(raw)) {
+        throw new Error(
+          "GET /api/videos returned a video list, not sync status — reload the API so REST routes match the UI.",
+        );
+      }
+      if (!raw || typeof raw !== "object" || typeof raw.running !== "boolean") {
+        throw new Error("Unexpected sync status from server.");
+      }
+      return raw;
+    }
+
     async function pollFetchUntilDone() {
+      let delayMs = 1500;
       for (;;) {
-        const snapshot = await (await fetch("/api/videos")).json();
+        const snapshot = parseSyncSnapshot(await (await fetch("/api/videos")).json());
         $("fetch-status").textContent = formatFetchStatus(snapshot);
         if (!snapshot.running) {
           if (snapshot.error) throw new Error(snapshot.error);
-          return snapshot.result || {};
+          return snapshot;
         }
-        await new Promise((r) => setTimeout(r, 1500));
+        const silence = snapshot.silence_seconds || 0;
+        if (silence > 120) delayMs = 5000;
+        else if (silence > 30) delayMs = 3000;
+        else delayMs = 1500;
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+
+    async function resumeSyncPollIfNeeded() {
+      let snapshot;
+      try {
+        snapshot = parseSyncSnapshot(await (await fetch("/api/videos")).json());
+      } catch {
+        return;
+      }
+      if (!snapshot.running) return;
+      $("fetch-status").textContent = formatFetchStatus(snapshot);
+      setFetchBusy(true);
+      try {
+        const snapshot = await pollFetchUntilDone();
+        $("fetch-status").textContent = formatFetchResult(snapshot);
+        await loadChannels();
+        await loadVideos();
+      } catch (err) {
+        $("fetch-status").textContent = err && err.message ? err.message : "Fetch failed";
+      } finally {
+        setFetchBusy(false);
       }
     }
 
@@ -737,18 +776,32 @@
       $("fetch-url-now").classList.toggle("busy", busy);
     }
 
-    function formatFetchResult(data) {
-      if (data.inbox_rows === 1 && data.video_id) {
+    function formatFetchResult(snapshot) {
+      const data = snapshot && snapshot.result && typeof snapshot.result === "object"
+        ? snapshot.result
+        : {};
+      if (data.video_id && Number(data.inbox_rows) === 1) {
         const label = data.outcome || (data.processed ? "processed" : data.skipped ? "skipped" : "failed");
         return `Video ${data.video_id}: ${label}`;
       }
-      const inbox = data.inbox_rows != null ? data.inbox_rows : data.fetched;
-      const scanned = data.scanned != null ? data.scanned : data.fetched;
+      const hasCounts =
+        data.inbox_rows != null
+        || data.fetched != null
+        || data.scanned != null
+        || data.processed != null;
+      if (!hasCounts) {
+        return snapshot.message || "Sync finished.";
+      }
+      const inbox = data.inbox_rows ?? data.fetched ?? 0;
+      const scanned = data.scanned ?? data.fetched ?? 0;
+      const processed = data.processed ?? 0;
+      const skipped = data.skipped ?? 0;
+      const failed = data.failed ?? 0;
       let msg =
-        `Scanned ${scanned} of ${inbox} inbox: ${data.processed} processed, ${data.skipped} skipped, ${data.failed} failed`;
-      if (data.processed > 0) {
+        `Scanned ${scanned} of ${inbox} inbox: ${processed} processed, ${skipped} skipped, ${failed} failed`;
+      if (processed > 0) {
         msg += " — use Synced last 24 hours to see what this run added";
-      } else if (data.skipped > 0) {
+      } else if (skipped > 0) {
         msg += " — raise YOUTUBE_NOTIFICATIONS_SCAN_LIMIT if the inbox backlog is deep";
       }
       return msg;
@@ -762,7 +815,8 @@
         const body = await res.json().catch(() => ({}));
         if (res.status === 409) {
           $("fetch-status").textContent = body.detail || "Fetch already running";
-          await pollFetchUntilDone();
+          const snapshot = await pollFetchUntilDone();
+          $("fetch-status").textContent = formatFetchResult(snapshot);
           await loadChannels();
           await loadVideos();
           return;
@@ -771,8 +825,8 @@
           $("fetch-status").textContent = typeof body.detail === "string" ? body.detail : "Fetch failed";
           return;
         }
-        const data = await pollFetchUntilDone();
-        $("fetch-status").textContent = formatFetchResult(data);
+        const snapshot = await pollFetchUntilDone();
+        $("fetch-status").textContent = formatFetchResult(snapshot);
         await loadChannels();
         await loadVideos();
       } catch (err) {
@@ -822,7 +876,7 @@
     }
     function escapeAttr(value) { return escapeHtml(value); }
 
-    loadChannels().then(loadVideos);
+    loadChannels().then(loadVideos).then(resumeSyncPollIfNeeded);
   </script>
 </body>
 </html>

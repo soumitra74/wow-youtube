@@ -267,6 +267,7 @@ def _fetch_ytdlp_playlist_listing(extract_target: str, *, scan_limit: int) -> di
             **_ytdlp_core_opts(),
             "skip_download": True,
             "extract_flat": True,
+            "ignoreerrors": True,
             "playlistend": scan_limit,
             "cookiefile": cookie_copy,
         }
@@ -342,6 +343,26 @@ def merge_inbox_and_playlist_videos() -> list[FeedVideo]:
     return videos
 
 
+def _scan_progress(message: str) -> None:
+    from wow_core.fetch_status import active_progress
+
+    prog = active_progress()
+    if prog:
+        prog.update("scan", message)
+
+
+def _channel_id_from_entry(entry: dict[str, Any]) -> str:
+    channel_id = _dict_channel_id(entry)
+    if channel_id:
+        return channel_id
+    url = str(entry.get("url") or entry.get("webpage_url") or "")
+    parsed = urlparse(url)
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) >= 2 and parts[0] == "channel" and parts[1].startswith("UC"):
+        return parts[1]
+    return ""
+
+
 def notification_entries_to_videos(
     info: dict[str, Any],
     *,
@@ -350,23 +371,24 @@ def notification_entries_to_videos(
 ) -> list[FeedVideo]:
     videos: list[FeedVideo] = []
     seen: set[str] = set()
-    for entry in info.get("entries") or []:
-        if not isinstance(entry, dict):
-            continue
+    entries = [entry for entry in info.get("entries") or [] if isinstance(entry, dict)]
+    for index, entry in enumerate(entries):
         video_id = _dict_video_id(entry)
         if not video_id or video_id in seen:
             continue
-        channel_id = _dict_channel_id(entry)
+        channel_id = _channel_id_from_entry(entry)
         published_date = _dict_published_date(entry)
         channel_name = _dict_channel_name(entry)
         title = str(entry.get("title") or video_id)
-        if resolve_metadata and (
-            not channel_id or not published_date or not channel_name or title == video_id
-        ):
+        # Full yt-dlp per-video extract is slow and noisy; only use it when the flat
+        # row lacks a channel id (required). Publish date / title are patched in process.
+        if resolve_metadata and not channel_id:
+            _scan_progress(
+                f"Resolving inbox metadata {index + 1}/{len(entries)} ({video_id})…",
+            )
             meta = resolve_metadata(video_id)
             if meta:
-                if not channel_id:
-                    channel_id = meta.channel_id
+                channel_id = meta.channel_id or channel_id
                 if not published_date:
                     published_date = meta.published_date
                 if not channel_name and meta.channel_name:

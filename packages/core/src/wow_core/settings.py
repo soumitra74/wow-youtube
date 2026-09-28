@@ -63,6 +63,8 @@ YOUTUBE_NOTIFICATIONS_LIMIT = int(os.getenv("YOUTUBE_NOTIFICATIONS_LIMIT", "10")
 YOUTUBE_NOTIFICATIONS_SCAN_LIMIT = int(
     os.getenv("YOUTUBE_NOTIFICATIONS_SCAN_LIMIT", "40")
 )
+# Abort in-memory sync if FetchProgress has no update for this many seconds (0 = disabled).
+SYNC_STALE_SECONDS = int(os.getenv("SYNC_STALE_SECONDS", "900"))
 YOUTUBE_FETCH_WATCH_LATER = os.getenv("YOUTUBE_FETCH_WATCH_LATER", "true").lower() in {
     "1",
     "true",

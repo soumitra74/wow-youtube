@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from wow_core import settings
+
 logger = logging.getLogger("wow.fetch")
 
 SILENCE_LOG_INTERVAL_SECONDS = 10.0
@@ -120,6 +122,16 @@ class FetchProgress:
                 error=self._error,
             ).to_dict()
 
+    def _maybe_fail_stale(self, silence: float) -> bool:
+        limit = settings.SYNC_STALE_SECONDS
+        if limit <= 0 or silence < limit:
+            return False
+        self.fail(
+            f"Sync timed out after {int(silence)}s with no progress "
+            f"(limit {limit}s). Check logs, cookies, and scan limits; then retry.",
+        )
+        return True
+
     def _watchdog_loop(self) -> None:
         while True:
             time.sleep(SILENCE_LOG_INTERVAL_SECONDS)
@@ -127,6 +139,8 @@ class FetchProgress:
                 if not self._running:
                     return
                 silence = time.monotonic() - self._last_activity
+                if self._maybe_fail_stale(silence):
+                    return
                 if silence < SILENCE_LOG_INTERVAL_SECONDS:
                     continue
                 if time.monotonic() - self._last_silence_log_at < SILENCE_LOG_INTERVAL_SECONDS:
