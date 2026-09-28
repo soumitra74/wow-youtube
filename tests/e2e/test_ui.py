@@ -31,6 +31,15 @@ def test_keyword_filter_narrows_browse_table(page: Page, live_server: str) -> No
     expect(page.locator("#browse-status")).to_contain_text("1 videos")
 
 
+def test_keyword_filter_applies_on_enter(page: Page, live_server: str) -> None:
+    _open_browse(page, live_server)
+    page.locator("#keyword").fill("orbital")
+    page.locator("#keyword").press("Enter")
+    expect(page.get_by_role("link", name=ORBITALS_TITLE)).to_be_visible()
+    expect(page.get_by_role("link", name=ROME_TITLE)).to_have_count(0)
+    expect(page.locator("#browse-status")).to_contain_text("1 videos")
+
+
 def test_channel_filter_shows_only_that_channel(page: Page, live_server: str) -> None:
     _open_browse(page, live_server)
     page.locator("#channel").select_option(label="History Hour")
@@ -91,11 +100,29 @@ def test_semantic_search_renders_stubbed_hit(page: Page, live_server: str) -> No
     expect(page.locator("#semantic-results")).to_contain_text(ORBITALS_TITLE)
 
 
+def test_semantic_search_submits_on_enter(page: Page, live_server: str) -> None:
+    _open_browse(page, live_server)
+    page.locator("nav").get_by_role("button", name="Semantic search").click()
+    page.locator("#semantic-q").fill("orbital mechanics")
+    page.locator("#semantic-q").press("Enter")
+    expect(page.locator("#semantic-status")).to_contain_text("results")
+    expect(page.locator("#semantic-results")).to_contain_text(ORBITALS_TITLE)
+
+
 def test_ask_renders_stubbed_answer_and_sources(page: Page, live_server: str) -> None:
     _open_browse(page, live_server)
     page.locator("nav").get_by_role("button", name="Ask").click()
     page.locator("#ask-q").fill("What matters for missions?")
     page.locator("#ask-go").click()
+    expect(page.locator("#ask-answer")).to_have_text("Orbitals matter for mission planning.")
+    expect(page.locator("#ask-sources")).to_contain_text(ORBITALS_TITLE)
+
+
+def test_ask_submits_on_ctrl_enter(page: Page, live_server: str) -> None:
+    _open_browse(page, live_server)
+    page.locator("nav").get_by_role("button", name="Ask").click()
+    page.locator("#ask-q").fill("What matters for missions?")
+    page.locator("#ask-q").press("Control+Enter")
     expect(page.locator("#ask-answer")).to_have_text("Orbitals matter for mission planning.")
     expect(page.locator("#ask-sources")).to_contain_text(ORBITALS_TITLE)
 
@@ -125,4 +152,11 @@ def test_fetch_url_shows_stubbed_video_outcome(page: Page, live_server: str) -> 
     _open_browse(page, live_server)
     page.locator("#fetch-url-input").fill("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
     page.get_by_role("button", name="Fetch Now").click()
+    expect(page.locator("#fetch-status")).to_contain_text("Video vid-orbitals: processed")
+
+
+def test_fetch_url_submits_on_enter(page: Page, live_server: str) -> None:
+    _open_browse(page, live_server)
+    page.locator("#fetch-url-input").fill("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    page.locator("#fetch-url-input").press("Enter")
     expect(page.locator("#fetch-status")).to_contain_text("Video vid-orbitals: processed")

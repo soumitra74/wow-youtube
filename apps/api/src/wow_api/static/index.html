@@ -383,7 +383,7 @@
     </section>
 
     <section id="view-ask" class="panel hidden">
-      <textarea id="ask-q" placeholder="Ask a question across your archived videos"></textarea>
+      <textarea id="ask-q" placeholder="Ask a question across your archived videos" title="Ctrl+Enter to ask"></textarea>
       <div class="search-row">
         <button class="action" id="ask-go">Ask</button>
       </div>
@@ -641,7 +641,29 @@
     });
     $("apply-filters").addEventListener("click", loadVideos);
 
-    $("semantic-go").addEventListener("click", async () => {
+    function onEnter(element, action) {
+      element.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || event.isComposing || event.repeat) return;
+        event.preventDefault();
+        action();
+      });
+    }
+
+    function onSubmitShortcut(element, action) {
+      element.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || event.isComposing || event.repeat) return;
+        if (!event.ctrlKey && !event.metaKey) return;
+        event.preventDefault();
+        action();
+      });
+    }
+
+    onEnter($("topic"), loadVideos);
+    onEnter($("keyword"), loadVideos);
+    onEnter($("date-from"), loadVideos);
+    onEnter($("date-to"), loadVideos);
+
+    async function runSemanticSearch() {
       const q = $("semantic-q").value.trim();
       if (!q) return;
       $("semantic-status").textContent = "Searching…";
@@ -654,9 +676,12 @@
           <p>${escapeHtml(v.summary)}</p>
         </article>
       `).join("");
-    });
+    }
 
-    $("ask-go").addEventListener("click", async () => {
+    $("semantic-go").addEventListener("click", runSemanticSearch);
+    onEnter($("semantic-q"), runSemanticSearch);
+
+    async function runAsk() {
       const question = $("ask-q").value.trim();
       if (!question) return;
       $("ask-status").textContent = "Thinking…";
@@ -673,7 +698,10 @@
       $("ask-sources").innerHTML = (data.sources || []).map((v) =>
         `<div><a href="${escapeAttr(v.url)}" target="_blank" rel="noreferrer">${escapeHtml(v.title)}</a> <span class="muted">— ${escapeHtml(v.channel_name)}</span></div>`
       ).join("");
-    });
+    }
+
+    $("ask-go").addEventListener("click", runAsk);
+    onSubmitShortcut($("ask-q"), runAsk);
 
     async function loadTrends() {
       const period = $("trend-period").value;
@@ -862,12 +890,7 @@
     }
 
     $("fetch-url-now").addEventListener("click", startUrlFetch);
-    $("fetch-url-input").addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        startUrlFetch();
-      }
-    });
+    onEnter($("fetch-url-input"), startUrlFetch);
 
     function escapeHtml(value) {
       return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
