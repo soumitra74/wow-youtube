@@ -86,6 +86,16 @@ def test_entry_video_id_from_watch_url() -> None:
     assert _entry_video_id(entry) == "xyz789"
 
 
+def test_parse_youtube_video_url() -> None:
+    from wow_core.youtube import parse_youtube_video_url
+
+    assert parse_youtube_video_url("aaaaaaaaaaa") == "aaaaaaaaaaa"
+    assert parse_youtube_video_url("https://www.youtube.com/watch?v=bbbbbbbbbbb") == "bbbbbbbbbbb"
+    assert parse_youtube_video_url("https://youtu.be/ccccccccccc") == "ccccccccccc"
+    assert parse_youtube_video_url("https://youtube.com/shorts/ddddddddddd") == "ddddddddddd"
+    assert parse_youtube_video_url("not-a-url") is None
+
+
 def test_truncate_transcript() -> None:
     text, truncated = truncate_transcript("hello world", max_chars=5)
     assert truncated is True

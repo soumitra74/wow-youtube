@@ -111,6 +111,24 @@
       margin: 0 0 0 6px;
       font-size: 0.9rem;
     }
+    nav .fetch-inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    nav .nav-sep {
+      color: var(--muted);
+      font-size: 1.1rem;
+      line-height: 1;
+      user-select: none;
+    }
+    nav #fetch-url-input {
+      width: min(300px, 36vw);
+      min-width: 160px;
+      padding: 7px 10px;
+      border-radius: 999px;
+    }
     nav button.active, nav button:hover {
       color: var(--ink);
       border-color: var(--accent);
@@ -177,6 +195,86 @@
       margin-bottom: 16px;
     }
     .hidden { display: none; }
+    .summary-link {
+      display: block;
+      margin: 4px 0 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font: inherit;
+      text-align: left;
+    }
+    .summary-link:hover, .summary-link:focus-visible {
+      color: var(--accent-2);
+      text-decoration: underline;
+    }
+    dialog {
+      width: min(900px, calc(100vw - 32px));
+      max-height: calc(100vh - 32px);
+      padding: 0;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+      color: var(--ink);
+    }
+    dialog::backdrop { background: rgba(0, 0, 0, 0.72); }
+    .detail-header {
+      position: sticky;
+      top: 0;
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+      justify-content: space-between;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    .detail-header h2 { margin: 0 0 4px; }
+    .detail-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .detail-body { padding: 4px 22px 24px; }
+    .detail-body h3 { margin: 22px 0 8px; }
+    .detail-text {
+      white-space: pre-wrap;
+      line-height: 1.65;
+    }
+    .detail-close {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--ink);
+      cursor: pointer;
+      font: inherit;
+      padding: 5px 10px;
+    }
+    .detail-delete {
+      border: 1px solid var(--high);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--high);
+      cursor: pointer;
+      font: inherit;
+      padding: 5px 10px;
+    }
+    .detail-delete:disabled {
+      cursor: wait;
+      opacity: 0.65;
+    }
+    #detail-takeaways { line-height: 1.6; }
+    #detail-transcript {
+      max-height: 45vh;
+      overflow: auto;
+      margin-top: 10px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--input);
+    }
     #custom-dates {
       display: flex;
       flex-wrap: wrap;
@@ -197,14 +295,25 @@
     <button data-view="semantic">Semantic search</button>
     <button data-view="ask">Ask</button>
     <button data-view="trends">Trends</button>
-    <button type="button" id="fetch-latest" class="icon" title="Fetch latest from YouTube" aria-label="Fetch latest from YouTube">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M21 12a9 9 0 0 0-15.36-6.36"/>
-        <polyline points="3 3 3 9 9 9"/>
-        <path d="M3 12a9 9 0 0 0 15.36 6.36"/>
-        <polyline points="21 21 21 15 15 15"/>
-      </svg>
-    </button>
+    <span class="fetch-inline">
+      <button type="button" id="fetch-latest" class="icon" title="Fetch latest from YouTube" aria-label="Fetch latest from YouTube">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M21 12a9 9 0 0 0-15.36-6.36"/>
+          <polyline points="3 3 3 9 9 9"/>
+          <path d="M3 12a9 9 0 0 0 15.36 6.36"/>
+          <polyline points="21 21 21 15 15 15"/>
+        </svg>
+      </button>
+      <span class="nav-sep" aria-hidden="true">|</span>
+      <input type="url" id="fetch-url-input" placeholder="YouTube URL" aria-label="YouTube URL" />
+      <button type="button" id="fetch-url-now" class="icon" title="Fetch Now" aria-label="Fetch Now">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3v12"/>
+          <polyline points="8 11 12 15 16 11"/>
+          <path d="M5 21h14"/>
+        </svg>
+      </button>
+    </span>
     <span id="fetch-status" class="status"></span>
     <button type="button" id="theme-toggle" class="icon" title="Switch to light theme" aria-label="Switch to light theme">
       <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true">
@@ -299,10 +408,36 @@
       <canvas id="trend-chart" height="120"></canvas>
     </section>
   </main>
+  <dialog id="video-detail" aria-labelledby="detail-title">
+    <div class="detail-header">
+      <div>
+        <h2 id="detail-title">Video details</h2>
+        <div id="detail-meta" class="muted"></div>
+      </div>
+      <div class="detail-actions">
+        <button type="button" class="detail-delete" id="detail-delete" disabled>Delete</button>
+        <button type="button" class="detail-close" id="detail-close" aria-label="Close details">Close</button>
+      </div>
+    </div>
+    <div class="detail-body">
+      <div id="detail-status" class="status"></div>
+      <div id="detail-content" class="hidden">
+        <h3>Detailed summary</h3>
+        <div id="detail-long-summary" class="detail-text"></div>
+        <h3>Key takeaways</h3>
+        <ul id="detail-takeaways"></ul>
+        <details>
+          <summary>Full transcript</summary>
+          <div id="detail-transcript" class="detail-text"></div>
+        </details>
+      </div>
+    </div>
+  </dialog>
   <script>
     const $ = (id) => document.getElementById(id);
     let channels = [];
     let chart;
+    let currentDetailVideoId = null;
 
     function currentTheme() {
       return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
@@ -414,7 +549,7 @@
           <td>${escapeHtml(v.channel_name)}</td>
           <td>
             <a href="${escapeAttr(v.url)}" target="_blank" rel="noreferrer">${escapeHtml(v.title)}</a>
-            <div class="muted">${escapeHtml(v.summary || "")}</div>
+            <button type="button" class="summary-link" data-id="${escapeAttr(v.video_id)}">${escapeHtml(v.summary || "")}</button>
           </td>
           <td class="rel-${escapeAttr(v.relevance)}">${escapeHtml(v.relevance)}</td>
           <td><div class="tags">${(v.topics || []).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("")}</div></td>
@@ -430,7 +565,75 @@
           });
         });
       });
+      document.querySelectorAll(".summary-link").forEach((button) => {
+        button.addEventListener("click", () => openVideoDetail(button.dataset.id));
+      });
     }
+
+    async function openVideoDetail(videoId) {
+      const dialog = $("video-detail");
+      currentDetailVideoId = videoId;
+      $("detail-title").textContent = "Video details";
+      $("detail-meta").textContent = "";
+      $("detail-status").textContent = "Loading…";
+      $("detail-content").classList.add("hidden");
+      $("detail-delete").disabled = true;
+      dialog.showModal();
+      try {
+        const response = await fetch(`/api/videos/${encodeURIComponent(videoId)}`);
+        if (!response.ok) throw new Error("Could not load video details.");
+        const video = await response.json();
+        $("detail-title").textContent = video.title || "Video details";
+        $("detail-meta").textContent = [
+          video.channel_name,
+          (video.published_date || "").slice(0, 10),
+        ].filter(Boolean).join(" · ");
+        $("detail-long-summary").textContent =
+          video.long_summary || "Detailed summary is unavailable for this previously processed video.";
+        $("detail-takeaways").innerHTML = (video.key_takeaways || [])
+          .map((item) => `<li>${escapeHtml(item)}</li>`)
+          .join("");
+        $("detail-transcript").textContent =
+          video.transcript || "Transcript is unavailable for this previously processed video.";
+        $("detail-status").textContent = "";
+        $("detail-content").classList.remove("hidden");
+        $("detail-delete").disabled = false;
+      } catch (error) {
+        $("detail-status").textContent = error.message || "Could not load video details.";
+      }
+    }
+
+    $("detail-close").addEventListener("click", () => $("video-detail").close());
+    $("detail-delete").addEventListener("click", async () => {
+      if (!currentDetailVideoId) return;
+      const title = $("detail-title").textContent || "this video";
+      if (!window.confirm(`Permanently delete "${title}" from the archive?`)) return;
+
+      const button = $("detail-delete");
+      button.disabled = true;
+      $("detail-status").textContent = "Deleting…";
+      try {
+        const response = await fetch(
+          `/api/videos/${encodeURIComponent(currentDetailVideoId)}`,
+          { method: "DELETE" },
+        );
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.detail || "Could not delete video.");
+        }
+        $("video-detail").close();
+        await loadVideos();
+      } catch (error) {
+        $("detail-status").textContent = error.message || "Could not delete video.";
+        button.disabled = false;
+      }
+    });
+    $("video-detail").addEventListener("close", () => {
+      currentDetailVideoId = null;
+    });
+    $("video-detail").addEventListener("click", (event) => {
+      if (event.target === $("video-detail")) $("video-detail").close();
+    });
 
     $("date-range").addEventListener("change", () => {
       syncCustomDates();
@@ -526,14 +729,36 @@
       }
     }
 
-    $("fetch-latest").addEventListener("click", async () => {
-      const btn = $("fetch-latest");
-      if (btn.disabled) return;
-      btn.disabled = true;
-      btn.classList.add("busy");
-      $("fetch-status").textContent = "Starting fetch…";
+    function setFetchBusy(busy) {
+      $("fetch-latest").disabled = busy;
+      $("fetch-url-now").disabled = busy;
+      $("fetch-url-input").disabled = busy;
+      $("fetch-latest").classList.toggle("busy", busy);
+      $("fetch-url-now").classList.toggle("busy", busy);
+    }
+
+    function formatFetchResult(data) {
+      if (data.inbox_rows === 1 && data.video_id) {
+        const label = data.outcome || (data.processed ? "processed" : data.skipped ? "skipped" : "failed");
+        return `Video ${data.video_id}: ${label}`;
+      }
+      const inbox = data.inbox_rows != null ? data.inbox_rows : data.fetched;
+      const scanned = data.scanned != null ? data.scanned : data.fetched;
+      let msg =
+        `Scanned ${scanned} of ${inbox} inbox: ${data.processed} processed, ${data.skipped} skipped, ${data.failed} failed`;
+      if (data.processed > 0) {
+        msg += " — use Synced last 24 hours to see what this run added";
+      } else if (data.skipped > 0) {
+        msg += " — raise YOUTUBE_NOTIFICATIONS_SCAN_LIMIT if the inbox backlog is deep";
+      }
+      return msg;
+    }
+
+    async function runFetch(startRequest, startingMessage) {
+      setFetchBusy(true);
+      $("fetch-status").textContent = startingMessage;
       try {
-        const res = await fetch("/api/fetch-latest", { method: "POST" });
+        const res = await startRequest();
         const body = await res.json().catch(() => ({}));
         if (res.status === 409) {
           $("fetch-status").textContent = body.detail || "Fetch already running";
@@ -547,23 +772,46 @@
           return;
         }
         const data = await pollFetchUntilDone();
-        const inbox = data.inbox_rows != null ? data.inbox_rows : data.fetched;
-        const scanned = data.scanned != null ? data.scanned : data.fetched;
-        let msg =
-          `Scanned ${scanned} of ${inbox} inbox: ${data.processed} processed, ${data.skipped} skipped, ${data.failed} failed`;
-        if (data.processed > 0) {
-          msg += " — use Synced last 24 hours to see what this run added";
-        } else if (data.skipped > 0) {
-          msg += " — raise YOUTUBE_NOTIFICATIONS_SCAN_LIMIT if the inbox backlog is deep";
-        }
-        $("fetch-status").textContent = msg;
+        $("fetch-status").textContent = formatFetchResult(data);
         await loadChannels();
         await loadVideos();
       } catch (err) {
         $("fetch-status").textContent = err && err.message ? err.message : "Fetch failed";
       } finally {
-        btn.disabled = false;
-        btn.classList.remove("busy");
+        setFetchBusy(false);
+      }
+    }
+
+    $("fetch-latest").addEventListener("click", () => {
+      if ($("fetch-latest").disabled) return;
+      runFetch(
+        () => fetch("/api/fetch-latest", { method: "POST" }),
+        "Starting fetch…",
+      );
+    });
+
+    function startUrlFetch() {
+      if ($("fetch-url-now").disabled) return;
+      const url = $("fetch-url-input").value.trim();
+      if (!url) {
+        $("fetch-status").textContent = "Enter a YouTube URL";
+        return;
+      }
+      runFetch(
+        () => fetch("/api/fetch-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        }),
+        "Starting fetch…",
+      );
+    }
+
+    $("fetch-url-now").addEventListener("click", startUrlFetch);
+    $("fetch-url-input").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        startUrlFetch();
       }
     });
 

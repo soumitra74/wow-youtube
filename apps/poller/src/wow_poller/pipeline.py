@@ -21,10 +21,12 @@ from wow_core.digest import write_digest
 from wow_core.fetch_status import FetchProgress, active_progress
 from wow_core.logging_setup import configure_poller_logging
 from wow_core.youtube import (
+    FeedVideo,
     TranscriptUnavailable,
     fetch_channel_feed,
     get_transcript,
     merge_inbox_and_playlist_videos,
+    parse_youtube_video_url,
     patch_published_date_if_missing,
     truncate_transcript,
     _resolve_video_metadata,
@@ -216,6 +218,68 @@ def run_latest(*, retry_errors: bool = False) -> dict[str, int]:
     }
 
 
+def run_fetch_url(url: str, *, retry_errors: bool = False) -> dict[str, Any]:
+    configure_poller_logging()
+    settings.ensure_data_dirs()
+    init_db()
+
+    video_id = parse_youtube_video_url(url)
+    if not video_id:
+        raise ValueError("Invalid YouTube URL")
+
+    prog = active_progress()
+    watch_url = f"https://www.youtube.com/watch?v={video_id}"
+    title = video_id
+    channel_id = ""
+    channel_name = ""
+    published_date = ""
+
+    if prog:
+        prog.update("metadata", f"Resolving metadata for {video_id}…")
+    meta = _resolve_video_metadata(video_id)
+    if meta:
+        if meta.title.strip():
+            title = meta.title.strip()
+        channel_id = meta.channel_id or ""
+        channel_name = meta.channel_name or ""
+        published_date = meta.published_date or ""
+
+    if not channel_id:
+        raise ValueError(f"Could not resolve channel for {video_id}")
+
+    channel_name = channel_name or channel_id
+    sync_channels([{"channel_id": channel_id, "channel_name": channel_name}])
+    video = FeedVideo(
+        video_id=video_id,
+        title=title,
+        published_date=published_date,
+        url=watch_url,
+        channel_id=channel_id,
+        channel_name=channel_name,
+    )
+    if prog:
+        prog.update("process", f"Processing {title[:80]} ({video_id})")
+    outcome = _process_video(
+        video,
+        {"channel_id": channel_id, "channel_name": channel_name},
+        retry_errors=retry_errors,
+        progress=prog,
+    )
+    processed_n = 1 if outcome == "processed" else 0
+    skipped_n = 1 if outcome == "skipped" else 0
+    failed_n = 1 if outcome == "failed" else 0
+    return {
+        "video_id": video_id,
+        "scanned": 1,
+        "fetched": 1,
+        "inbox_rows": 1,
+        "processed": processed_n,
+        "skipped": skipped_n,
+        "failed": failed_n,
+        "outcome": outcome,
+    }
+
+
 def _process_video(
     video: Any,
     channel: dict[str, Any],
@@ -272,7 +336,9 @@ def _process_video(
             published_date=published_date,
             url=video.url,
             transcript_length=len(transcript.text),
+            transcript=transcript.text,
             summary=summary["summary"],
+            long_summary=summary["long_summary"],
             key_takeaways=summary["key_takeaways"],
             topics=summary["topics"],
             relevance=summary["estimated_relevance"],

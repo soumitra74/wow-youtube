@@ -500,18 +500,35 @@ def patch_published_date_if_missing(video_id: str) -> bool:
     return update_published_date_if_missing(video_id, meta.published_date)
 
 
+def parse_youtube_video_url(url: str) -> str | None:
+    raw = (url or "").strip()
+    if not raw:
+        return None
+    if _VIDEO_ID_RE.fullmatch(raw):
+        return raw
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    host = (parsed.netloc or "").lower().removeprefix("www.")
+    if host == "youtu.be":
+        segment = parsed.path.lstrip("/").split("/")[0]
+        return segment if _VIDEO_ID_RE.fullmatch(segment) else None
+    if host in {"youtube.com", "m.youtube.com", "music.youtube.com"}:
+        if parsed.path == "/watch":
+            values = parse_qs(parsed.query).get("v")
+            if values and _VIDEO_ID_RE.fullmatch(values[0]):
+                return values[0]
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) >= 2 and parts[0] in {"shorts", "embed", "live"}:
+            vid = parts[1]
+            return vid if _VIDEO_ID_RE.fullmatch(vid) else None
+    return None
+
+
 def _entry_video_id(entry: Any) -> str | None:
     video_id = getattr(entry, "yt_videoid", None)
     if video_id:
         return str(video_id)
     link = getattr(entry, "link", "") or ""
-    parsed = urlparse(link)
-    if parsed.path == "/watch":
-        values = parse_qs(parsed.query).get("v")
-        return values[0] if values else None
-    if "youtu.be" in parsed.netloc:
-        return parsed.path.lstrip("/") or None
-    return None
+    return parse_youtube_video_url(link)
 
 
 def _throttle_captions(
