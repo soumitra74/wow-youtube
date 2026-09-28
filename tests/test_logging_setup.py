@@ -12,7 +12,7 @@ def test_fetch_status_200_access_line_downgraded_to_debug() -> None:
         level=logging.INFO,
         pathname=__file__,
         lineno=1,
-        msg='127.0.0.1:8000 - "GET /api/fetch-status HTTP/1.1" 200',
+        msg='127.0.0.1:8000 - "GET /api/videos HTTP/1.1" 200',
         args=(),
         exc_info=None,
     )
@@ -24,7 +24,7 @@ def test_fetch_status_200_access_line_downgraded_to_debug() -> None:
         level=logging.INFO,
         pathname=__file__,
         lineno=1,
-        msg='127.0.0.1:8000 - "GET /api/videos HTTP/1.1" 200',
+        msg='127.0.0.1:8000 - "GET /api/video HTTP/1.1" 200',
         args=(),
         exc_info=None,
     )

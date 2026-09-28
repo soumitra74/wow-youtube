@@ -82,8 +82,8 @@ def test_entry_video_id_from_yt_field() -> None:
 
 
 def test_entry_video_id_from_watch_url() -> None:
-    entry = SimpleNamespace(link="https://www.youtube.com/watch?v=xyz789&t=12s")
-    assert _entry_video_id(entry) == "xyz789"
+    entry = SimpleNamespace(link="https://www.youtube.com/watch?v=abc123xyz78&t=12s")
+    assert _entry_video_id(entry) == "abc123xyz78"
 
 
 def test_parse_youtube_video_url() -> None:

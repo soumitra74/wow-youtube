@@ -73,8 +73,8 @@ def api_channels() -> list[dict[str, Any]]:
     return list_channels()
 
 
-@app.get("/api/videos")
-def api_videos(
+@app.get("/api/video")
+def api_video_list(
     channel_id: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
@@ -98,16 +98,16 @@ def api_videos(
     )
 
 
-@app.get("/api/videos/{video_id}")
-def api_video(video_id: str) -> dict[str, Any]:
+@app.get("/api/video/{video_id}")
+def api_video_detail(video_id: str) -> dict[str, Any]:
     video = get_video(video_id)
     if video is None:
         raise HTTPException(status_code=404, detail="video not found")
     return video
 
 
-@app.delete("/api/videos/{video_id}", status_code=204)
-def api_delete_video(video_id: str) -> Response:
+@app.delete("/api/video/{video_id}", status_code=204)
+def api_video_delete(video_id: str) -> Response:
     if get_video(video_id) is None:
         raise HTTPException(status_code=404, detail="video not found")
     try:
@@ -122,8 +122,19 @@ def api_delete_video(video_id: str) -> Response:
     return Response(status_code=204)
 
 
-@app.get("/api/search/semantic")
-def api_semantic(q: str, k: int | None = None) -> list[dict[str, Any]]:
+class VideoPatchBody(BaseModel):
+    watched: bool
+
+
+@app.patch("/api/video/{video_id}")
+def api_video_patch(video_id: str, body: VideoPatchBody) -> dict[str, Any]:
+    if not set_watched(video_id, body.watched):
+        raise HTTPException(status_code=404, detail="video not found")
+    return {"video_id": video_id, "watched": body.watched}
+
+
+@app.get("/api/query")
+def api_query(q: str, k: int | None = None) -> list[dict[str, Any]]:
     query = q.strip()
     if not query:
         raise HTTPException(status_code=400, detail="q is required")
@@ -138,13 +149,13 @@ def api_semantic(q: str, k: int | None = None) -> list[dict[str, Any]]:
     return results
 
 
-class AskBody(BaseModel):
+class AnswerBody(BaseModel):
     question: str = Field(min_length=1)
     k: int | None = None
 
 
-@app.post("/api/ask")
-def api_ask(body: AskBody) -> dict[str, Any]:
+@app.post("/api/answers")
+def api_answers(body: AnswerBody) -> dict[str, Any]:
     hits = query_similar(body.question, top_k=body.k)
     videos = get_videos_by_ids([h["video_id"] for h in hits])
     answer = ask_across_videos(question=body.question, videos=videos)
@@ -182,13 +193,7 @@ def _run_fetch_url_job(url: str) -> None:
         progress.fail(f"YouTube fetch failed: {exc}")
 
 
-@app.get("/api/fetch-status")
-def api_fetch_status() -> dict[str, Any]:
-    return get_fetch_progress().snapshot()
-
-
-@app.post("/api/fetch-latest")
-def api_fetch_latest() -> JSONResponse:
+def _begin_sync_run() -> None:
     progress = get_fetch_progress()
     if progress.is_running():
         raise HTTPException(status_code=409, detail="Fetch already in progress")
@@ -196,26 +201,30 @@ def api_fetch_latest() -> JSONResponse:
         progress.begin()
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/videos")
+def api_videos_sync_status() -> dict[str, Any]:
+    return get_fetch_progress().snapshot()
+
+
+@app.post("/api/videos")
+def api_videos_sync_start() -> JSONResponse:
+    _begin_sync_run()
     threading.Thread(target=_run_fetch_job, name="fetch-latest", daemon=True).start()
     return JSONResponse({"started": True}, status_code=202)
 
 
-class FetchUrlBody(BaseModel):
+class VideoImportBody(BaseModel):
     url: str = Field(min_length=1)
 
 
-@app.post("/api/fetch-url")
-def api_fetch_url(body: FetchUrlBody) -> JSONResponse:
+@app.post("/api/video")
+def api_video_import(body: VideoImportBody) -> JSONResponse:
     url = body.url.strip()
     if not url:
         raise HTTPException(status_code=400, detail="url is required")
-    progress = get_fetch_progress()
-    if progress.is_running():
-        raise HTTPException(status_code=409, detail="Fetch already in progress")
-    try:
-        progress.begin()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _begin_sync_run()
     threading.Thread(
         target=_run_fetch_url_job,
         args=(url,),
@@ -223,17 +232,6 @@ def api_fetch_url(body: FetchUrlBody) -> JSONResponse:
         daemon=True,
     ).start()
     return JSONResponse({"started": True}, status_code=202)
-
-
-class WatchedBody(BaseModel):
-    watched: bool
-
-
-@app.patch("/api/videos/{video_id}/watched")
-def api_watched(video_id: str, body: WatchedBody) -> dict[str, Any]:
-    if not set_watched(video_id, body.watched):
-        raise HTTPException(status_code=404, detail="video not found")
-    return {"video_id": video_id, "watched": body.watched}
 
 
 def main() -> None:

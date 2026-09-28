@@ -541,7 +541,7 @@
 
     async function loadVideos() {
       $("browse-status").textContent = "Loading…";
-      const videos = await (await fetch("/api/videos?" + videoParams().toString())).json();
+      const videos = await (await fetch("/api/video?" + videoParams().toString())).json();
       $("browse-status").textContent = videos.length + " videos";
       $("video-rows").innerHTML = videos.map((v) => `
         <tr>
@@ -558,7 +558,7 @@
       `).join("");
       document.querySelectorAll(".watch-toggle").forEach((box) => {
         box.addEventListener("change", async () => {
-          await fetch(`/api/videos/${box.dataset.id}/watched`, {
+          await fetch(`/api/video/${box.dataset.id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ watched: box.checked }),
@@ -580,7 +580,7 @@
       $("detail-delete").disabled = true;
       dialog.showModal();
       try {
-        const response = await fetch(`/api/videos/${encodeURIComponent(videoId)}`);
+        const response = await fetch(`/api/video/${encodeURIComponent(videoId)}`);
         if (!response.ok) throw new Error("Could not load video details.");
         const video = await response.json();
         $("detail-title").textContent = video.title || "Video details";
@@ -614,7 +614,7 @@
       $("detail-status").textContent = "Deleting…";
       try {
         const response = await fetch(
-          `/api/videos/${encodeURIComponent(currentDetailVideoId)}`,
+          `/api/video/${encodeURIComponent(currentDetailVideoId)}`,
           { method: "DELETE" },
         );
         if (!response.ok) {
@@ -645,7 +645,7 @@
       const q = $("semantic-q").value.trim();
       if (!q) return;
       $("semantic-status").textContent = "Searching…";
-      const hits = await (await fetch("/api/search/semantic?q=" + encodeURIComponent(q))).json();
+      const hits = await (await fetch("/api/query?q=" + encodeURIComponent(q))).json();
       $("semantic-status").textContent = hits.length + " results";
       $("semantic-results").innerHTML = hits.map((v) => `
         <article>
@@ -662,7 +662,7 @@
       $("ask-status").textContent = "Thinking…";
       $("ask-answer").textContent = "";
       $("ask-sources").innerHTML = "";
-      const res = await fetch("/api/ask", {
+      const res = await fetch("/api/answers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question }),
@@ -719,7 +719,7 @@
 
     async function pollFetchUntilDone() {
       for (;;) {
-        const snapshot = await (await fetch("/api/fetch-status")).json();
+        const snapshot = await (await fetch("/api/videos")).json();
         $("fetch-status").textContent = formatFetchStatus(snapshot);
         if (!snapshot.running) {
           if (snapshot.error) throw new Error(snapshot.error);
@@ -785,7 +785,7 @@
     $("fetch-latest").addEventListener("click", () => {
       if ($("fetch-latest").disabled) return;
       runFetch(
-        () => fetch("/api/fetch-latest", { method: "POST" }),
+        () => fetch("/api/videos", { method: "POST" }),
         "Starting fetch…",
       );
     });
@@ -798,7 +798,7 @@
         return;
       }
       runFetch(
-        () => fetch("/api/fetch-url", {
+        () => fetch("/api/video", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url }),

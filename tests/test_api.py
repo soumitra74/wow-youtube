@@ -15,14 +15,14 @@ def test_video_detail_returns_transcript_and_long_summary(monkeypatch) -> None:
     }
     monkeypatch.setattr(api_module, "get_video", lambda video_id: detail if video_id == "vid1" else None)
 
-    assert api_module.api_video("vid1") == detail
+    assert api_module.api_video_detail("vid1") == detail
 
 
 def test_video_detail_returns_404_for_unknown_video(monkeypatch) -> None:
     monkeypatch.setattr(api_module, "get_video", lambda _video_id: None)
 
     with pytest.raises(HTTPException) as exc:
-        api_module.api_video("missing")
+        api_module.api_video_detail("missing")
     assert exc.value.status_code == 404
 
 
@@ -40,7 +40,7 @@ def test_delete_video_removes_index_before_database(monkeypatch) -> None:
         lambda video_id: operations.append(f"database:{video_id}") or True,
     )
 
-    response = api_module.api_delete_video("vid1")
+    response = api_module.api_video_delete("vid1")
 
     assert response.status_code == 204
     assert operations == ["index:vid1", "database:vid1"]
@@ -50,7 +50,7 @@ def test_delete_video_returns_404_for_unknown_video(monkeypatch) -> None:
     monkeypatch.setattr(api_module, "get_video", lambda _video_id: None)
 
     with pytest.raises(HTTPException) as exc:
-        api_module.api_delete_video("missing")
+        api_module.api_video_delete("missing")
 
     assert exc.value.status_code == 404
 
@@ -71,7 +71,25 @@ def test_delete_video_keeps_database_when_index_removal_fails(monkeypatch) -> No
     monkeypatch.setattr(api_module, "delete_video", record_database_delete)
 
     with pytest.raises(HTTPException) as exc:
-        api_module.api_delete_video("vid1")
+        api_module.api_video_delete("vid1")
 
     assert exc.value.status_code == 500
     assert database_deleted is False
+
+
+def test_video_patch_watched(monkeypatch) -> None:
+    monkeypatch.setattr(api_module, "set_watched", lambda video_id, watched: video_id == "vid1")
+
+    result = api_module.api_video_patch("vid1", api_module.VideoPatchBody(watched=True))
+
+    assert result == {"video_id": "vid1", "watched": True}
+
+
+def test_sync_status_returns_snapshot(monkeypatch) -> None:
+    class FakeProgress:
+        def snapshot(self) -> dict[str, object]:
+            return {"running": False, "message": "idle"}
+
+    monkeypatch.setattr(api_module, "get_fetch_progress", lambda: FakeProgress())
+
+    assert api_module.api_videos_sync_status() == {"running": False, "message": "idle"}

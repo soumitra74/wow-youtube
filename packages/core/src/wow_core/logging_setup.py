@@ -10,11 +10,11 @@ _ACCESS_FILTER_INSTALLED = False
 
 
 class QuietFetchStatusAccessFilter(logging.Filter):
-    """Downgrade successful fetch-status polling lines so they stay at DEBUG under INFO servers."""
+    """Downgrade successful SyncRun poll lines (GET /api/videos) to DEBUG under INFO servers."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         msg = record.getMessage()
-        if "/api/fetch-status" in msg and " 200" in msg:
+        if 'GET /api/videos HTTP' in msg and " 200" in msg:
             record.levelno = logging.DEBUG
             record.levelname = logging.DEBUG
         return True
