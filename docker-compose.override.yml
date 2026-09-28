@@ -5,7 +5,7 @@ services:
       - ./packages:/app/packages
       - ./config:/app/config
       - ./data:/app/data
-    command: uvicorn wow_api.app:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn wow_api.app:app --host 0.0.0.0 --port 8000 --reload --log-level info
     environment:
       WOW_ENV: dev
       PYTHONPATH: /app/apps/api/src:/app/apps/poller/src:/app/packages/core/src
