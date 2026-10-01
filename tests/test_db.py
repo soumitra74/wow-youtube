@@ -16,6 +16,7 @@ from wow_core.db import (
     list_channels,
     list_watchlater_items,
     query_videos,
+    set_video_chat_transcript,
     set_watched,
     sync_channels,
     topic_trends,
@@ -245,4 +246,37 @@ def test_init_db_migrates_existing_videos_table_for_details(tmp_path: Path) -> N
 
     with sqlite3.connect(path) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(videos)")}
-    assert {"transcript", "long_summary", "description"} <= columns
+    assert {"transcript", "long_summary", "description", "chat_transcript"} <= columns
+
+
+def test_video_chat_transcript_round_trip(tmp_path: Path) -> None:
+    path = _db(tmp_path)
+    upsert_seen(video_id="vid1", channel_id="chan1", status="processed", db_path=path)
+    insert_video(
+        video_id="vid1",
+        channel_id="chan1",
+        title="Orbitals",
+        published_date="2026-08-01T10:00:00+00:00",
+        url="https://www.youtube.com/watch?v=vid1",
+        transcript_length=10,
+        transcript="Transcript.",
+        summary="Summary.",
+        long_summary="Long summary.",
+        key_takeaways=["One"],
+        topics=["space"],
+        relevance="high",
+        db_path=path,
+    )
+    transcript = [
+        {"role": "user", "content": "Question?", "display": "Short label"},
+        {
+            "role": "assistant",
+            "content": "Answer.",
+            "web_provider": "tavily",
+            "web_sources": [{"title": "NASA", "url": "https://nasa.gov"}],
+        },
+    ]
+    assert set_video_chat_transcript("vid1", transcript, db_path=path) is True
+    video = get_video("vid1", db_path=path)
+    assert video is not None
+    assert video["chat_transcript"] == transcript

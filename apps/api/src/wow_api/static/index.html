@@ -698,6 +698,26 @@
       $("detail-chat-verify").disabled = false;
     }
 
+    function chatMessageForApi(role, content, display) {
+      const msg = { role, content };
+      if (display && display !== content) msg.display = display;
+      return msg;
+    }
+
+    function restoreDetailChat(transcript) {
+      detailChatMessages = [];
+      $("detail-chat-log").innerHTML = "";
+      for (const msg of transcript || []) {
+        if (msg.role === "user") {
+          detailChatMessages.push(chatMessageForApi("user", msg.content, msg.display));
+          appendChatBubble("user", msg.display || msg.content);
+        } else if (msg.role === "assistant") {
+          detailChatMessages.push({ role: "assistant", content: msg.content });
+          appendChatBubble("assistant", msg.content, msg.web_sources, msg.web_provider);
+        }
+      }
+    }
+
     function appendChatBubble(role, text, webSources, webProvider) {
       const bubble = document.createElement("div");
       bubble.className = "chat-bubble " + role;
@@ -722,7 +742,7 @@
       const displayText = options.displayText ?? text;
       const webSearch = options.forceWebSearch ?? $("detail-chat-web").checked;
 
-      detailChatMessages.push({ role: "user", content: text });
+      detailChatMessages.push(chatMessageForApi("user", text, displayText));
       appendChatBubble("user", displayText);
       if (!options.text) $("detail-chat-input").value = "";
       $("detail-chat-status").textContent = "Thinking…";
@@ -749,6 +769,14 @@
         const answer = data.answer || "No answer";
         detailChatMessages.push({ role: "assistant", content: answer });
         appendChatBubble("assistant", answer, data.web_sources, data.web_provider);
+        if (Array.isArray(data.chat_transcript)) {
+          detailChatMessages = data.chat_transcript.map((msg) => {
+            if (msg.role === "user") {
+              return chatMessageForApi("user", msg.content, msg.display);
+            }
+            return { role: "assistant", content: msg.content };
+          });
+        }
         $("detail-chat-status").textContent = "";
       } catch (error) {
         detailChatMessages.pop();
@@ -802,6 +830,7 @@
         $("detail-transcript-panel").open = false;
         $("detail-transcript").textContent =
           video.transcript || "Transcript is unavailable for this previously processed video.";
+        restoreDetailChat(video.chat_transcript);
         $("detail-status").textContent = "";
         $("detail-content").classList.remove("hidden");
         $("detail-delete").disabled = false;

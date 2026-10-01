@@ -23,6 +23,7 @@ from wow_core.db import (
     init_db,
     list_channels,
     query_videos,
+    set_video_chat_transcript,
     set_watched,
     topic_trends,
 )
@@ -158,6 +159,7 @@ class AnswerBody(BaseModel):
 class ChatMessage(BaseModel):
     role: str
     content: str = Field(min_length=1)
+    display: str | None = None
 
     @field_validator("role")
     @classmethod
@@ -179,7 +181,14 @@ def api_video_chat(video_id: str, body: VideoChatBody) -> dict[str, Any]:
     if video is None:
         raise HTTPException(status_code=404, detail="video not found")
 
-    messages = [{"role": msg.role, "content": msg.content.strip()} for msg in body.messages]
+    messages = [
+        {
+            "role": msg.role,
+            "content": msg.content.strip(),
+            **({"display": msg.display.strip()} if msg.display and msg.display.strip() else {}),
+        }
+        for msg in body.messages
+    ]
     latest_user = next(
         (msg["content"] for msg in reversed(messages) if msg["role"] == "user"),
         "",
@@ -202,11 +211,28 @@ def api_video_chat(video_id: str, body: VideoChatBody) -> dict[str, Any]:
         for hit in web_hits
         if hit.get("url")
     ]
+    chat_transcript: list[dict[str, Any]] = []
+    for msg in messages:
+        entry: dict[str, Any] = {"role": msg["role"], "content": msg["content"]}
+        if msg.get("display"):
+            entry["display"] = msg["display"]
+        chat_transcript.append(entry)
+    chat_transcript.append(
+        {
+            "role": "assistant",
+            "content": answer,
+            "web_provider": web_provider,
+            "web_sources": web_sources,
+        }
+    )
+    set_video_chat_transcript(video_id, chat_transcript)
+
     return {
         "answer": answer,
         "web_search": body.web_search,
         "web_provider": web_provider,
         "web_sources": web_sources,
+        "chat_transcript": chat_transcript,
     }
 
 

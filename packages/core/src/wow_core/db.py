@@ -123,7 +123,7 @@ def init_db(db_path: Path | None = None) -> None:
     with connect(db_path) as conn:
         conn.executescript(SCHEMA)
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(videos)")}
-        for name in ("transcript", "long_summary", "description"):
+        for name in ("transcript", "long_summary", "description", "chat_transcript"):
             if name not in columns:
                 conn.execute(f"ALTER TABLE videos ADD COLUMN {name} TEXT")
 
@@ -291,6 +291,20 @@ def update_published_date_if_missing(
     return cur.rowcount > 0
 
 
+def set_video_chat_transcript(
+    video_id: str,
+    transcript: list[dict[str, Any]],
+    db_path: Path | None = None,
+) -> bool:
+    payload = json.dumps(transcript, ensure_ascii=False)
+    with connect(db_path) as conn:
+        cur = conn.execute(
+            "UPDATE videos SET chat_transcript = ? WHERE video_id = ?",
+            (payload, video_id),
+        )
+        return cur.rowcount > 0
+
+
 def set_watched(video_id: str, watched: bool, db_path: Path | None = None) -> bool:
     with connect(db_path) as conn:
         cur = conn.execute(
@@ -430,6 +444,12 @@ def _video_row(row: sqlite3.Row) -> dict[str, Any]:
     data["key_takeaways"] = json.loads(data["key_takeaways"])
     data["topics"] = json.loads(data["topics"])
     data["watched"] = bool(data["watched"])
+    raw_chat = data.get("chat_transcript")
+    if raw_chat:
+        parsed = json.loads(raw_chat)
+        data["chat_transcript"] = parsed if isinstance(parsed, list) else []
+    else:
+        data["chat_transcript"] = []
     return data
 
 

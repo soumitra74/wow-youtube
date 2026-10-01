@@ -226,6 +226,12 @@ def test_video_chat_returns_answer_and_web_sources(monkeypatch) -> None:
         "ask_about_video",
         lambda video, messages, web_hits=None: f"Answer ({len(messages)} msgs, {len(web_hits or [])} web)",
     )
+    saved: list[dict] = []
+    monkeypatch.setattr(
+        api_module,
+        "set_video_chat_transcript",
+        lambda video_id, transcript: saved.extend([{"video_id": video_id, "transcript": transcript}]) or True,
+    )
 
     payload = api_module.api_video_chat(
         "v1",
@@ -235,6 +241,10 @@ def test_video_chat_returns_answer_and_web_sources(monkeypatch) -> None:
     assert payload["answer"].startswith("Answer (1 msgs")
     assert payload["web_provider"] == "tavily"
     assert payload["web_sources"] == [{"title": "NASA", "url": "https://nasa.gov/x"}]
+    assert len(saved) == 1
+    assert saved[0]["video_id"] == "v1"
+    assert saved[0]["transcript"][-1]["role"] == "assistant"
+    assert payload["chat_transcript"] == saved[0]["transcript"]
 
 
 def test_video_chat_skips_web_when_disabled(monkeypatch) -> None:
@@ -250,6 +260,7 @@ def test_video_chat_skips_web_when_disabled(monkeypatch) -> None:
         "ask_about_video",
         lambda video, messages, web_hits=None: "ok",
     )
+    monkeypatch.setattr(api_module, "set_video_chat_transcript", lambda _vid, _t: True)
 
     payload = api_module.api_video_chat(
         "v1",
