@@ -285,6 +285,33 @@
       padding-top: 8px;
       border-top: 1px solid var(--line);
     }
+    .detail-chat-heading {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 10px;
+      align-items: center;
+      margin: 22px 0 0;
+    }
+    .detail-chat-heading h3 { margin: 0; }
+    .detail-chat-verify-pill {
+      border: 1px solid var(--accent-2);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--accent-2);
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.82rem;
+      padding: 4px 12px;
+      line-height: 1.35;
+    }
+    .detail-chat-verify-pill:hover,
+    .detail-chat-verify-pill:focus-visible {
+      background: var(--input);
+    }
+    .detail-chat-verify-pill:disabled {
+      cursor: wait;
+      opacity: 0.6;
+    }
     #detail-chat-log {
       max-height: 28vh;
       overflow-y: auto;
@@ -503,7 +530,12 @@
           <div id="detail-transcript" class="detail-text detail-scroll"></div>
         </details>
         <section class="detail-chat" aria-labelledby="detail-chat-heading">
-          <h3 id="detail-chat-heading">Ask about this video</h3>
+          <div class="detail-chat-heading">
+            <h3 id="detail-chat-heading">Ask about this video</h3>
+            <button type="button" class="detail-chat-verify-pill" id="detail-chat-verify" title="Check summary claims against recent authoritative web sources">
+              Verify summary via web
+            </button>
+          </div>
           <div id="detail-chat-log" aria-live="polite"></div>
           <textarea id="detail-chat-input" placeholder="Ask a question about this video (Ctrl+Enter to send)" title="Ctrl+Enter to send"></textarea>
           <div class="detail-chat-controls">
@@ -521,6 +553,9 @@
     let chart;
     let currentDetailVideoId = null;
     let detailChatMessages = [];
+    const VERIFY_SUMMARY_PROMPT =
+      "Verify the main claims in this video's summary against current authoritative web sources. " +
+      "Flag anything outdated, incorrect, or missing important context since the video was published.";
 
     function currentTheme() {
       return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
@@ -660,6 +695,7 @@
       $("detail-chat-status").textContent = "";
       $("detail-chat-send").disabled = false;
       $("detail-chat-input").disabled = false;
+      $("detail-chat-verify").disabled = false;
     }
 
     function appendChatBubble(role, text, webSources, webProvider) {
@@ -679,17 +715,20 @@
       $("detail-chat-log").scrollTop = $("detail-chat-log").scrollHeight;
     }
 
-    async function sendDetailChat() {
+    async function sendDetailChat(options = {}) {
       if (!currentDetailVideoId) return;
-      const text = $("detail-chat-input").value.trim();
+      const text = (options.text ?? $("detail-chat-input").value).trim();
       if (!text) return;
+      const displayText = options.displayText ?? text;
+      const webSearch = options.forceWebSearch ?? $("detail-chat-web").checked;
 
       detailChatMessages.push({ role: "user", content: text });
-      appendChatBubble("user", text);
-      $("detail-chat-input").value = "";
+      appendChatBubble("user", displayText);
+      if (!options.text) $("detail-chat-input").value = "";
       $("detail-chat-status").textContent = "Thinking…";
       $("detail-chat-send").disabled = true;
       $("detail-chat-input").disabled = true;
+      $("detail-chat-verify").disabled = true;
 
       try {
         const response = await fetch(
@@ -699,7 +738,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               messages: detailChatMessages,
-              web_search: $("detail-chat-web").checked,
+              web_search: webSearch,
             }),
           },
         );
@@ -718,8 +757,18 @@
       } finally {
         $("detail-chat-send").disabled = false;
         $("detail-chat-input").disabled = false;
+        $("detail-chat-verify").disabled = false;
         $("detail-chat-input").focus();
       }
+    }
+
+    function verifySummaryViaWeb() {
+      $("detail-chat-web").checked = true;
+      sendDetailChat({
+        text: VERIFY_SUMMARY_PROMPT,
+        displayText: "Verify summary via web",
+        forceWebSearch: true,
+      });
     }
 
     async function openVideoDetail(videoId) {
@@ -786,8 +835,9 @@
         button.disabled = false;
       }
     });
-    $("detail-chat-send").addEventListener("click", sendDetailChat);
-    onSubmitShortcut($("detail-chat-input"), sendDetailChat);
+    $("detail-chat-send").addEventListener("click", () => sendDetailChat());
+    $("detail-chat-verify").addEventListener("click", verifySummaryViaWeb);
+    onSubmitShortcut($("detail-chat-input"), () => sendDetailChat());
 
     $("video-detail").addEventListener("close", () => {
       currentDetailVideoId = null;
