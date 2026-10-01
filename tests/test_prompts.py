@@ -16,9 +16,13 @@ def test_load_repo_prompt_templates() -> None:
     root = Path(__file__).resolve().parents[1]
     summarize = load_template(root / "config" / "prompts" / "summarize.txt")
     ask = load_template(root / "config" / "prompts" / "ask.txt")
+    video_chat = load_template(root / "config" / "prompts" / "video_chat.txt")
     assert "{transcript}" in summarize
     assert "{question}" in ask
     assert "{context}" in ask
+    assert "{long_summary}" in video_chat
+    assert "{web_context}" in video_chat
+    assert "{conversation}" in video_chat
 
 
 def test_parse_and_validate_summary_json() -> None:

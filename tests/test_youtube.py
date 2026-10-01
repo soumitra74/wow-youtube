@@ -25,6 +25,7 @@ from wow_core.youtube import (
     _resolve_video_metadata,
     _youtube_player_clients,
     _YtDlpWarningLogger,
+    fetch_channel_feed,
     fetch_notification_videos,
     fetch_playlist_videos,
     fetch_watch_later_videos,
@@ -175,6 +176,57 @@ def test_notification_entries_channel_id_from_channel_url() -> None:
     }
     videos = notification_entries_to_videos(info, limit=10)
     assert videos[0].channel_id == "UCchan9"
+
+
+def test_fetch_channel_feed_keeps_plain_description(monkeypatch) -> None:
+    import sys
+    import types
+
+    entry = SimpleNamespace(
+        yt_videoid="aaaaaaaaaaa",
+        title="Launch",
+        published="2026-08-01T00:00:00+00:00",
+        link="https://www.youtube.com/watch?v=aaaaaaaaaaa",
+        media_description=None,
+        description=None,
+        summary="<p>Booster notes &amp; links</p>",
+    )
+    fake_feedparser = types.ModuleType("feedparser")
+    fake_feedparser.parse = lambda _url: SimpleNamespace(bozo=False, entries=[entry])  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "feedparser", fake_feedparser)
+
+    videos = fetch_channel_feed("UCchan", "https://example.invalid/rss")
+
+    assert videos[0].description == "Booster notes & links"
+
+
+def test_notification_entries_keep_description_from_flat_row_or_metadata() -> None:
+    from wow_core.youtube import ResolvedVideoMeta
+
+    listed = notification_entries_to_videos(
+        {
+            "entries": [
+                {
+                    "id": "aaaaaaaaaaa",
+                    "title": "Listed",
+                    "channel_id": "UCchan1",
+                    "description": "Shownotes",
+                }
+            ]
+        },
+        limit=5,
+    )
+    assert listed[0].description == "Shownotes"
+
+    resolved = notification_entries_to_videos(
+        {"entries": [{"id": "bbbbbbbbbbb", "title": "Needs lookup"}]},
+        limit=5,
+        resolve_metadata=lambda _video_id: ResolvedVideoMeta(
+            channel_id="UClooked",
+            description="From the video page",
+        ),
+    )
+    assert resolved[0].description == "From the video page"
 
 
 def test_notification_entries_dedupe_and_resolve_missing_channel_id() -> None:
@@ -343,6 +395,7 @@ def test_resolve_channel_id_uses_safari_client_and_cookie_copy(tmp_path: Path, m
                 "channel_id": "UCresolvedchannelidxx",
                 "title": "Ignored",
                 "upload_date": "20260910",
+                "description": "<p>Flight notes &amp; links</p>",
             }
 
     monkeypatch.setattr("wow_core.youtube._youtube_dl", lambda: type("M", (), {"YoutubeDL": FakeYDL}))
@@ -350,6 +403,7 @@ def test_resolve_channel_id_uses_safari_client_and_cookie_copy(tmp_path: Path, m
     assert meta is not None
     assert meta.channel_id == "UCresolvedchannelidxx"
     assert meta.published_date.startswith("2026-09-10")
+    assert meta.description == "Flight notes & links"
     assert _resolve_channel_id("aaaaaaaaaaa") == "UCresolvedchannelidxx"
     assert captured["url"] == "https://www.youtube.com/watch?v=aaaaaaaaaaa"
     assert captured["download"] is False

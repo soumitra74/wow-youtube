@@ -204,6 +204,75 @@ def test_query_merges_hits_with_videos_and_skips_orphans(monkeypatch) -> None:
     assert results[0]["distance"] == 0.1
 
 
+def test_video_chat_returns_answer_and_web_sources(monkeypatch) -> None:
+    video = {
+        "video_id": "v1",
+        "title": "Demo",
+        "url": "https://example.com/v1",
+        "summary": "Short",
+        "long_summary": "Long",
+    }
+    monkeypatch.setattr(api_module, "get_video", lambda video_id: video if video_id == "v1" else None)
+    monkeypatch.setattr(
+        api_module,
+        "search_web",
+        lambda question, video=None: (
+            [{"title": "NASA", "url": "https://nasa.gov/x", "snippet": "update"}],
+            "tavily",
+        ),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "ask_about_video",
+        lambda video, messages, web_hits=None: f"Answer ({len(messages)} msgs, {len(web_hits or [])} web)",
+    )
+
+    payload = api_module.api_video_chat(
+        "v1",
+        api_module.VideoChatBody(messages=[api_module.ChatMessage(role="user", content="Latest?")]),
+    )
+
+    assert payload["answer"].startswith("Answer (1 msgs")
+    assert payload["web_provider"] == "tavily"
+    assert payload["web_sources"] == [{"title": "NASA", "url": "https://nasa.gov/x"}]
+
+
+def test_video_chat_skips_web_when_disabled(monkeypatch) -> None:
+    video = {"video_id": "v1", "title": "Demo", "summary": "Short", "long_summary": "Long", "url": ""}
+    monkeypatch.setattr(api_module, "get_video", lambda _video_id: video)
+
+    def fail_search(*_args, **_kwargs):
+        raise AssertionError("search_web should not run")
+
+    monkeypatch.setattr(api_module, "search_web", fail_search)
+    monkeypatch.setattr(
+        api_module,
+        "ask_about_video",
+        lambda video, messages, web_hits=None: "ok",
+    )
+
+    payload = api_module.api_video_chat(
+        "v1",
+        api_module.VideoChatBody(
+            messages=[api_module.ChatMessage(role="user", content="Hi")],
+            web_search=False,
+        ),
+    )
+    assert payload["answer"] == "ok"
+    assert payload["web_sources"] == []
+
+
+def test_video_chat_returns_404_for_unknown_video(monkeypatch) -> None:
+    monkeypatch.setattr(api_module, "get_video", lambda _video_id: None)
+
+    with pytest.raises(HTTPException) as exc:
+        api_module.api_video_chat(
+            "missing",
+            api_module.VideoChatBody(messages=[api_module.ChatMessage(role="user", content="Hi")]),
+        )
+    assert exc.value.status_code == 404
+
+
 def test_answers_returns_answer_and_sources(monkeypatch) -> None:
     monkeypatch.setattr(
         api_module,

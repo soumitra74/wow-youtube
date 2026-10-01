@@ -72,6 +72,58 @@ def ask_across_videos(*, question: str, videos: list[dict[str, Any]]) -> str:
     return _complete(settings.CLAUDE_ASK_MODEL, prompt, max_tokens=2048)
 
 
+def ask_about_video(
+    *,
+    video: dict[str, Any],
+    messages: list[dict[str, str]],
+    web_hits: list[dict[str, Any]] | None = None,
+) -> str:
+    if not settings.ANTHROPIC_API_KEY:
+        raise SummarizeError("ANTHROPIC_API_KEY is not set")
+    if not messages:
+        raise SummarizeError("messages are required")
+
+    takeaways = video.get("key_takeaways") or []
+    takeaway_lines = "\n".join(f"- {item}" for item in takeaways) if takeaways else "(none)"
+    topics = ", ".join(video.get("topics") or [])
+
+    web_blocks = []
+    for hit in web_hits or []:
+        title = str(hit.get("title") or hit.get("url") or "Source").strip()
+        url = str(hit.get("url") or "").strip()
+        snippet = str(hit.get("snippet") or "").strip()
+        published = str(hit.get("published_date") or "").strip()
+        date_line = f"Published: {published}\n" if published else ""
+        web_blocks.append(f"Title: {title}\nURL: {url}\n{date_line}Snippet: {snippet}")
+    web_context = "\n\n---\n\n".join(web_blocks) if web_blocks else "(none)"
+
+    conversation_lines = []
+    for msg in messages:
+        role = str(msg.get("role") or "").strip().lower()
+        content = str(msg.get("content") or "").strip()
+        if role not in {"user", "assistant"} or not content:
+            continue
+        label = "User" if role == "user" else "Assistant"
+        conversation_lines.append(f"{label}: {content}")
+    conversation = "\n\n".join(conversation_lines) if conversation_lines else "(none)"
+
+    template = load_template(settings.VIDEO_CHAT_PROMPT_PATH)
+    prompt = render_template(
+        template,
+        title=video.get("title", ""),
+        channel_name=video.get("channel_name", ""),
+        published_date=video.get("published_date", ""),
+        url=video.get("url", ""),
+        topics=topics,
+        summary=video.get("summary", ""),
+        long_summary=video.get("long_summary") or video.get("summary") or "",
+        key_takeaways=takeaway_lines,
+        web_context=web_context,
+        conversation=conversation,
+    )
+    return _complete(settings.CLAUDE_ASK_MODEL, prompt, max_tokens=2048)
+
+
 def _complete(model: str, prompt: str, *, max_tokens: int) -> str:
     import anthropic
 

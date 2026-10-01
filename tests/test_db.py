@@ -70,16 +70,19 @@ def test_seen_and_video_roundtrip(tmp_path: Path) -> None:
         key_takeaways=["Inclination matters", "Delta-v is scarce"],
         topics=["space", "physics"],
         relevance="high",
+        description="Chapters, links, and shownotes.",
         db_path=path,
     )
     video = get_video("vid1", db_path=path)
     assert video is not None
     assert video["transcript"] == "Full orbital mechanics transcript."
+    assert video["description"] == "Chapters, links, and shownotes."
     assert video["long_summary"] == "A detailed walkthrough of orbital mechanics and mission planning."
     assert video["topics"] == ["space", "physics"]
     assert video["watched"] is False
     compact_video = get_videos_by_ids(["vid1"], db_path=path)[0]
     assert "transcript" not in compact_video
+    assert "description" not in compact_video
     assert "long_summary" not in compact_video
     assert set_watched("vid1", True, db_path=path) is True
     assert get_video("vid1", db_path=path)["watched"] is True
@@ -141,6 +144,7 @@ def test_query_filters_and_keyword(tmp_path: Path) -> None:
     rows = query_videos(topic="agents", keyword="LangGraph", db_path=path)
     assert len(rows) == 1
     assert "transcript" not in rows[0]
+    assert "description" not in rows[0]
     assert "long_summary" not in rows[0]
     assert query_videos(relevance="low", db_path=path) == []
     assert query_videos(date_from="2099-01-01T00:00:00+00:00", db_path=path) == []
@@ -241,4 +245,4 @@ def test_init_db_migrates_existing_videos_table_for_details(tmp_path: Path) -> N
 
     with sqlite3.connect(path) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(videos)")}
-    assert {"transcript", "long_summary"} <= columns
+    assert {"transcript", "long_summary", "description"} <= columns

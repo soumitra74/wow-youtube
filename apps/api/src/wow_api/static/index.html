@@ -237,7 +237,7 @@
       gap: 8px;
       align-items: center;
     }
-    .detail-body { padding: 4px 22px 24px; }
+    .detail-body { padding: 4px 22px 24px; overflow-y: auto; }
     .detail-body h3 { margin: 22px 0 8px; }
     .detail-text {
       white-space: pre-wrap;
@@ -266,7 +266,12 @@
       opacity: 0.65;
     }
     #detail-takeaways { line-height: 1.6; }
-    #detail-transcript {
+    .detail-body details { margin-top: 22px; }
+    .detail-body details > summary {
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .detail-scroll {
       max-height: 45vh;
       overflow: auto;
       margin-top: 10px;
@@ -274,6 +279,69 @@
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--input);
+    }
+    .detail-chat {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--line);
+    }
+    #detail-chat-log {
+      max-height: 28vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin: 10px 0 12px;
+      padding: 4px 2px;
+    }
+    .chat-bubble {
+      max-width: 92%;
+      padding: 10px 12px;
+      border-radius: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+    .chat-bubble.user {
+      align-self: flex-end;
+      background: var(--input);
+      border: 1px solid var(--line);
+    }
+    .chat-bubble.assistant {
+      align-self: flex-start;
+      background: transparent;
+      border: 1px solid var(--line);
+    }
+    .chat-web-footnote {
+      margin-top: 6px;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    .chat-web-footnote a { color: var(--accent-2); }
+    #detail-chat-input {
+      width: 100%;
+      min-height: 72px;
+      resize: vertical;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--input);
+      color: var(--ink);
+      font: inherit;
+      box-sizing: border-box;
+    }
+    .detail-chat-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 14px;
+      align-items: center;
+      margin-top: 10px;
+    }
+    .detail-chat-controls label {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 0.92rem;
     }
     #custom-dates {
       display: flex;
@@ -426,10 +494,24 @@
         <div id="detail-long-summary" class="detail-text"></div>
         <h3>Key takeaways</h3>
         <ul id="detail-takeaways"></ul>
-        <details>
-          <summary>Full transcript</summary>
-          <div id="detail-transcript" class="detail-text"></div>
+        <details id="detail-description-panel">
+          <summary>Description</summary>
+          <div id="detail-description" class="detail-text detail-scroll"></div>
         </details>
+        <details id="detail-transcript-panel">
+          <summary>Full transcript</summary>
+          <div id="detail-transcript" class="detail-text detail-scroll"></div>
+        </details>
+        <section class="detail-chat" aria-labelledby="detail-chat-heading">
+          <h3 id="detail-chat-heading">Ask about this video</h3>
+          <div id="detail-chat-log" aria-live="polite"></div>
+          <textarea id="detail-chat-input" placeholder="Ask a question about this video (Ctrl+Enter to send)" title="Ctrl+Enter to send"></textarea>
+          <div class="detail-chat-controls">
+            <label><input type="checkbox" id="detail-chat-web" checked /> Web search (latest, authoritative sources)</label>
+            <button type="button" class="action" id="detail-chat-send">Send</button>
+          </div>
+          <div id="detail-chat-status" class="status"></div>
+        </section>
       </div>
     </div>
   </dialog>
@@ -438,6 +520,7 @@
     let channels = [];
     let chart;
     let currentDetailVideoId = null;
+    let detailChatMessages = [];
 
     function currentTheme() {
       return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
@@ -570,11 +653,83 @@
       });
     }
 
+    function resetDetailChat() {
+      detailChatMessages = [];
+      $("detail-chat-log").innerHTML = "";
+      $("detail-chat-input").value = "";
+      $("detail-chat-status").textContent = "";
+      $("detail-chat-send").disabled = false;
+      $("detail-chat-input").disabled = false;
+    }
+
+    function appendChatBubble(role, text, webSources, webProvider) {
+      const bubble = document.createElement("div");
+      bubble.className = "chat-bubble " + role;
+      bubble.textContent = text;
+      if (role === "assistant" && webSources && webSources.length) {
+        const foot = document.createElement("div");
+        foot.className = "chat-web-footnote";
+        const label = webProvider ? `Web (${webProvider}): ` : "Web: ";
+        foot.innerHTML = label + webSources.map((s) =>
+          `<a href="${escapeAttr(s.url)}" target="_blank" rel="noreferrer">${escapeHtml(s.title || s.url)}</a>`
+        ).join(" · ");
+        bubble.appendChild(foot);
+      }
+      $("detail-chat-log").appendChild(bubble);
+      $("detail-chat-log").scrollTop = $("detail-chat-log").scrollHeight;
+    }
+
+    async function sendDetailChat() {
+      if (!currentDetailVideoId) return;
+      const text = $("detail-chat-input").value.trim();
+      if (!text) return;
+
+      detailChatMessages.push({ role: "user", content: text });
+      appendChatBubble("user", text);
+      $("detail-chat-input").value = "";
+      $("detail-chat-status").textContent = "Thinking…";
+      $("detail-chat-send").disabled = true;
+      $("detail-chat-input").disabled = true;
+
+      try {
+        const response = await fetch(
+          `/api/video/${encodeURIComponent(currentDetailVideoId)}/chat`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              messages: detailChatMessages,
+              web_search: $("detail-chat-web").checked,
+            }),
+          },
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.detail || "Could not get an answer.");
+        }
+        const answer = data.answer || "No answer";
+        detailChatMessages.push({ role: "assistant", content: answer });
+        appendChatBubble("assistant", answer, data.web_sources, data.web_provider);
+        $("detail-chat-status").textContent = "";
+      } catch (error) {
+        detailChatMessages.pop();
+        $("detail-chat-log").lastElementChild?.remove();
+        $("detail-chat-status").textContent = error.message || "Could not get an answer.";
+      } finally {
+        $("detail-chat-send").disabled = false;
+        $("detail-chat-input").disabled = false;
+        $("detail-chat-input").focus();
+      }
+    }
+
     async function openVideoDetail(videoId) {
       const dialog = $("video-detail");
       currentDetailVideoId = videoId;
+      resetDetailChat();
       $("detail-title").textContent = "Video details";
       $("detail-meta").textContent = "";
+      $("detail-description-panel").open = false;
+      $("detail-transcript-panel").open = false;
       $("detail-status").textContent = "Loading…";
       $("detail-content").classList.add("hidden");
       $("detail-delete").disabled = true;
@@ -593,6 +748,9 @@
         $("detail-takeaways").innerHTML = (video.key_takeaways || [])
           .map((item) => `<li>${escapeHtml(item)}</li>`)
           .join("");
+        $("detail-description-panel").open = false;
+        $("detail-description").textContent = video.description || "No description for this video.";
+        $("detail-transcript-panel").open = false;
         $("detail-transcript").textContent =
           video.transcript || "Transcript is unavailable for this previously processed video.";
         $("detail-status").textContent = "";
@@ -628,8 +786,12 @@
         button.disabled = false;
       }
     });
+    $("detail-chat-send").addEventListener("click", sendDetailChat);
+    onSubmitShortcut($("detail-chat-input"), sendDetailChat);
+
     $("video-detail").addEventListener("close", () => {
       currentDetailVideoId = null;
+      resetDetailChat();
     });
     $("video-detail").addEventListener("click", (event) => {
       if (event.target === $("video-detail")) $("video-detail").close();

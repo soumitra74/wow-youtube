@@ -19,14 +19,6 @@ def _prepare(tmp_path: Path, monkeypatch) -> Path:
     return db_path
 
 
-def _prepare(tmp_path: Path, monkeypatch) -> Path:
-    db_path = tmp_path / "wow.db"
-    monkeypatch.setattr("wow_core.settings.DB_PATH", db_path)
-    init_db()
-    sync_channels([{"channel_id": "chan1", "channel_name": "Demo"}])
-    return db_path
-
-
 def test_process_skips_already_seen(tmp_path: Path, monkeypatch) -> None:
     _prepare(tmp_path, monkeypatch)
     upsert_seen(video_id="vid1", channel_id="chan1", status="processed")
@@ -57,6 +49,7 @@ def test_process_retries_error_rows(tmp_path: Path, monkeypatch) -> None:
         title="Old",
         published_date="2026-08-22T00:00:00+00:00",
         url="",
+        description="Existing notes",
     )
     assert _process_video(video, {"channel_id": "chan1"}, retry_errors=False) == "skipped"
     assert called["n"] == 0
@@ -70,16 +63,19 @@ def test_process_stores_full_transcript_and_long_summary(tmp_path: Path, monkeyp
         "wow_poller.pipeline.get_transcript",
         lambda _video_id: TranscriptResult(text="Complete transcript text.", source="manual"),
     )
-    monkeypatch.setattr(
-        "wow_poller.pipeline.summarize_video",
-        lambda **_kwargs: {
+    summarized: dict = {}
+
+    def fake_summarize(**kwargs):
+        summarized.update(kwargs)
+        return {
             "summary": "Short summary.",
             "long_summary": "Detailed summary targeting one thousand words.",
             "key_takeaways": ["A concrete point"],
             "topics": ["education", "other"],
             "estimated_relevance": "medium",
-        },
-    )
+        }
+
+    monkeypatch.setattr("wow_poller.pipeline.summarize_video", fake_summarize)
     monkeypatch.setattr("wow_poller.pipeline.upsert_summary", lambda **_kwargs: None)
     video = FeedVideo(
         video_id="vid-detail",
@@ -87,6 +83,7 @@ def test_process_stores_full_transcript_and_long_summary(tmp_path: Path, monkeyp
         published_date="2026-08-22T00:00:00+00:00",
         url="https://www.youtube.com/watch?v=vid-detail",
         channel_id="chan1",
+        description="Shownotes and chapter links.",
     )
 
     assert _process_video(
@@ -97,7 +94,59 @@ def test_process_stores_full_transcript_and_long_summary(tmp_path: Path, monkeyp
     stored = get_video("vid-detail")
     assert stored is not None
     assert stored["transcript"] == "Complete transcript text."
+    assert stored["description"] == "Shownotes and chapter links."
     assert stored["long_summary"] == "Detailed summary targeting one thousand words."
+    assert "description" not in summarized
+    assert summarized["transcript"] == "Complete transcript text."
+
+
+def test_process_fills_missing_description_without_summarizing_it(tmp_path: Path, monkeypatch) -> None:
+    _prepare(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "wow_poller.pipeline.get_transcript",
+        lambda _video_id: TranscriptResult(text="Spoken words.", source="manual"),
+    )
+    summarized: dict = {}
+
+    def fake_summarize(**kwargs):
+        summarized.update(kwargs)
+        return {
+            "summary": "Short summary.",
+            "long_summary": "Detailed summary.",
+            "key_takeaways": ["A concrete point"],
+            "topics": ["education"],
+            "estimated_relevance": "medium",
+        }
+
+    monkeypatch.setattr("wow_poller.pipeline.summarize_video", fake_summarize)
+    monkeypatch.setattr("wow_poller.pipeline.upsert_summary", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        "wow_poller.pipeline._resolve_video_metadata",
+        lambda _video_id: SimpleNamespace(
+            channel_id="chan1",
+            channel_name="Demo",
+            published_date="",
+            title="Detailed video",
+            description="Fetched from the video page.",
+        ),
+    )
+    video = FeedVideo(
+        video_id="vid-nodesc",
+        title="Detailed video",
+        published_date="2026-08-22T00:00:00+00:00",
+        url="https://www.youtube.com/watch?v=vid-nodesc",
+        channel_id="chan1",
+    )
+
+    assert _process_video(
+        video,
+        {"channel_id": "chan1", "channel_name": "Demo"},
+        retry_errors=False,
+    ) == "processed"
+    stored = get_video("vid-nodesc")
+    assert stored is not None
+    assert stored["description"] == "Fetched from the video page."
+    assert "description" not in summarized
 
 
 def test_run_fetch_url_rejects_invalid_url(tmp_path: Path, monkeypatch) -> None:

@@ -233,6 +233,7 @@ def run_fetch_url(url: str, *, retry_errors: bool = False) -> dict[str, Any]:
     channel_id = ""
     channel_name = ""
     published_date = ""
+    description = ""
 
     if prog:
         prog.update("metadata", f"Resolving metadata for {video_id}…")
@@ -243,6 +244,7 @@ def run_fetch_url(url: str, *, retry_errors: bool = False) -> dict[str, Any]:
         channel_id = meta.channel_id or ""
         channel_name = meta.channel_name or ""
         published_date = meta.published_date or ""
+        description = (getattr(meta, "description", "") or "").strip()
 
     if not channel_id:
         raise ValueError(f"Could not resolve channel for {video_id}")
@@ -256,6 +258,7 @@ def run_fetch_url(url: str, *, retry_errors: bool = False) -> dict[str, Any]:
         url=watch_url,
         channel_id=channel_id,
         channel_name=channel_name,
+        description=description,
     )
     if prog:
         prog.update("process", f"Processing {title[:80]} ({video_id})")
@@ -298,10 +301,14 @@ def _process_video(
             return "skipped"
 
     published_date = (video.published_date or "").strip()
-    if not published_date:
+    description = str(getattr(video, "description", "") or "").strip()
+    if not published_date or not description:
         meta = _resolve_video_metadata(video.video_id)
-        if meta and meta.published_date.strip():
-            published_date = meta.published_date.strip()
+        if meta:
+            if not published_date and meta.published_date.strip():
+                published_date = meta.published_date.strip()
+            if not description:
+                description = (getattr(meta, "description", "") or "").strip()
 
     logger.info("Processing %s (%s)", video.title, video.video_id)
     try:
@@ -335,6 +342,7 @@ def _process_video(
             title=video.title,
             published_date=published_date,
             url=video.url,
+            description=description,
             transcript_length=len(transcript.text),
             transcript=transcript.text,
             summary=summary["summary"],

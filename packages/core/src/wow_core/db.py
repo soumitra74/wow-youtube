@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS videos (
     title              TEXT NOT NULL,
     published_date     TEXT NOT NULL,
     url                TEXT NOT NULL,
+    description        TEXT,
     transcript_length  INTEGER,
     transcript         TEXT,
     summary            TEXT NOT NULL,
@@ -122,7 +123,7 @@ def init_db(db_path: Path | None = None) -> None:
     with connect(db_path) as conn:
         conn.executescript(SCHEMA)
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(videos)")}
-        for name in ("transcript", "long_summary"):
+        for name in ("transcript", "long_summary", "description"):
             if name not in columns:
                 conn.execute(f"ALTER TABLE videos ADD COLUMN {name} TEXT")
 
@@ -219,20 +220,22 @@ def insert_video(
     key_takeaways: list[str],
     topics: list[str],
     relevance: Relevance,
+    description: str = "",
     db_path: Path | None = None,
 ) -> None:
     with connect(db_path) as conn:
         conn.execute(
             """
             INSERT INTO videos (
-                video_id, channel_id, title, published_date, url,
+                video_id, channel_id, title, published_date, url, description,
                 transcript_length, transcript, summary, long_summary,
                 key_takeaways, topics, relevance, processed_date, watched
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
             ON CONFLICT(video_id) DO UPDATE SET
                 title = excluded.title,
                 published_date = excluded.published_date,
                 url = excluded.url,
+                description = COALESCE(NULLIF(excluded.description, ''), videos.description),
                 transcript_length = excluded.transcript_length,
                 transcript = excluded.transcript,
                 summary = excluded.summary,
@@ -248,6 +251,7 @@ def insert_video(
                 title,
                 published_date,
                 url,
+                description,
                 transcript_length,
                 transcript,
                 summary,
@@ -421,6 +425,8 @@ def topic_trends(
 
 def _video_row(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
+    if "description" in data and not data["description"]:
+        data["description"] = ""
     data["key_takeaways"] = json.loads(data["key_takeaways"])
     data["topics"] = json.loads(data["topics"])
     data["watched"] = bool(data["watched"])

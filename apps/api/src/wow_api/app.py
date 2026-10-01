@@ -9,12 +9,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from wow_core import settings
 from wow_core.logging_setup import configure_server_logging
 from wow_core.chroma_store import delete_summary, query_similar
-from wow_core.claude_client import ask_across_videos
+from wow_core.claude_client import SummarizeError, ask_about_video, ask_across_videos
+from wow_core.web_search import search_web
 from wow_core.db import (
     delete_video,
     get_video,
@@ -152,6 +153,61 @@ def api_query(q: str, k: int | None = None) -> list[dict[str, Any]]:
 class AnswerBody(BaseModel):
     question: str = Field(min_length=1)
     k: int | None = None
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str = Field(min_length=1)
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: str) -> str:
+        role = value.strip().lower()
+        if role not in {"user", "assistant"}:
+            raise ValueError("role must be user or assistant")
+        return role
+
+
+class VideoChatBody(BaseModel):
+    messages: list[ChatMessage] = Field(min_length=1)
+    web_search: bool = True
+
+
+@app.post("/api/video/{video_id}/chat")
+def api_video_chat(video_id: str, body: VideoChatBody) -> dict[str, Any]:
+    video = get_video(video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail="video not found")
+
+    messages = [{"role": msg.role, "content": msg.content.strip()} for msg in body.messages]
+    latest_user = next(
+        (msg["content"] for msg in reversed(messages) if msg["role"] == "user"),
+        "",
+    )
+    if not latest_user:
+        raise HTTPException(status_code=400, detail="messages must include a user message")
+
+    web_hits: list[dict[str, Any]] = []
+    web_provider: str | None = None
+    if body.web_search:
+        web_hits, web_provider = search_web(question=latest_user, video=video)
+
+    try:
+        answer = ask_about_video(video=video, messages=messages, web_hits=web_hits or None)
+    except SummarizeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    web_sources = [
+        {"title": hit.get("title") or hit.get("url"), "url": hit.get("url")}
+        for hit in web_hits
+        if hit.get("url")
+    ]
+    return {
+        "answer": answer,
+        "web_search": body.web_search,
+        "web_provider": web_provider,
+        "web_sources": web_sources,
+    }
 
 
 @app.post("/api/answers")

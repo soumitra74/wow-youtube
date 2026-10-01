@@ -48,6 +48,16 @@ def test_channel_filter_shows_only_that_channel(page: Page, live_server: str) ->
     expect(page.get_by_role("link", name=ORBITALS_TITLE)).to_have_count(0)
 
 
+def test_video_detail_chat_returns_stubbed_answer(page: Page, live_server: str) -> None:
+    _open_browse(page, live_server)
+    page.get_by_role("button", name="A walkthrough of orbital mechanics.").click()
+    page.locator("#detail-chat-input").fill("How does inclination affect missions?")
+    page.locator("#detail-chat-send").click()
+    expect(page.locator("#detail-chat-log .chat-bubble.assistant")).to_contain_text(
+        "Inclination and delta-v drive mission design."
+    )
+
+
 def test_video_detail_shows_summary_takeaways_and_transcript(page: Page, live_server: str) -> None:
     _open_browse(page, live_server)
     page.get_by_role("button", name="A walkthrough of orbital mechanics.").click()
@@ -56,7 +66,13 @@ def test_video_detail_shows_summary_takeaways_and_transcript(page: Page, live_se
     expect(page.locator("#detail-title")).to_have_text(ORBITALS_TITLE)
     expect(page.locator("#detail-long-summary")).to_contain_text("mission planning")
     expect(page.locator("#detail-takeaways")).to_contain_text("Inclination matters")
-    page.get_by_text("Full transcript").click()
+    description = page.locator("#detail-description-panel")
+    transcript = page.locator("#detail-transcript-panel")
+    expect(description).to_have_js_property("open", False)
+    expect(transcript).to_have_js_property("open", False)
+    description.locator("summary").click()
+    expect(page.locator("#detail-description")).to_contain_text("shownotes and reference links")
+    transcript.locator("summary").click()
     expect(page.locator("#detail-transcript")).to_contain_text("Full orbital mechanics transcript.")
 
 

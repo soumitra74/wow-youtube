@@ -27,6 +27,7 @@ CHANNELS_PATH = CONFIG_DIR / "channels.json"
 PROMPTS_DIR = CONFIG_DIR / "prompts"
 SUMMARIZE_PROMPT_PATH = PROMPTS_DIR / "summarize.txt"
 ASK_PROMPT_PATH = PROMPTS_DIR / "ask.txt"
+VIDEO_CHAT_PROMPT_PATH = PROMPTS_DIR / "video_chat.txt"
 
 DB_PATH = DATA_DIR / "wow.db"
 CHROMA_DIR = DATA_DIR / "chroma"
@@ -57,6 +58,21 @@ WHISPER_MAX_MINUTES = int(os.getenv("WHISPER_MAX_MINUTES", "90"))
 WHISPER_SHARD_MINUTES = int(os.getenv("WHISPER_SHARD_MINUTES", "10"))
 WHISPER_SHARD_OVERLAP_SECONDS = float(os.getenv("WHISPER_SHARD_OVERLAP_SECONDS", "5"))
 SEMANTIC_TOP_K = int(os.getenv("SEMANTIC_TOP_K", "8"))
+
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY", "")
+WEB_SEARCH_MAX_RESULTS = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
+WEB_SEARCH_RECENCY_DAYS = int(os.getenv("WEB_SEARCH_RECENCY_DAYS", "90"))
+WEB_SEARCH_INCLUDE_DOMAINS = [
+    part.strip()
+    for part in os.getenv("WEB_SEARCH_INCLUDE_DOMAINS", "").split(",")
+    if part.strip()
+]
+WEB_SEARCH_EXCLUDE_DOMAINS = [
+    part.strip()
+    for part in os.getenv("WEB_SEARCH_EXCLUDE_DOMAINS", "").split(",")
+    if part.strip()
+]
 # Max new videos to summarize per reload (0 = no cap for one run).
 YOUTUBE_NOTIFICATIONS_LIMIT = int(os.getenv("YOUTUBE_NOTIFICATIONS_LIMIT", "10"))
 # How many inbox rows yt-dlp reads (top N are often already archived).

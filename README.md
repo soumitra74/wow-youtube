@@ -62,3 +62,7 @@ bash scripts/install-hooks.sh            # enable the git hooks
 - `packages/core` — shared library
 - `config/prompts` — editable Claude templates
 - `data/` — SQLite, Chroma, logs, digests, Whisper/HF caches
+
+## License
+
+MIT. See [LICENSE](LICENSE).

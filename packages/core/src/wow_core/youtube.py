@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import logging
 import re
@@ -41,6 +42,7 @@ class FeedVideo:
     url: str
     channel_id: str
     channel_name: str = ""
+    description: str = ""
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,7 @@ class ResolvedVideoMeta:
     published_date: str = ""
     channel_name: str = ""
     title: str = ""
+    description: str = ""
 
 
 class NotificationAuthError(Exception):
@@ -84,6 +87,7 @@ def fetch_channel_feed(channel_id: str, rss_url: str) -> list[FeedVideo]:
                 published_date=getattr(entry, "published", "") or "",
                 url=getattr(entry, "link", "") or f"https://www.youtube.com/watch?v={video_id}",
                 channel_id=channel_id,
+                description=_feed_description(entry),
             )
         )
     return videos
@@ -380,6 +384,7 @@ def notification_entries_to_videos(
         published_date = _dict_published_date(entry)
         channel_name = _dict_channel_name(entry)
         title = str(entry.get("title") or video_id)
+        description = _coerce_description(entry.get("description"))
         # Full yt-dlp per-video extract is slow and noisy; only use it when the flat
         # row lacks a channel id (required). Publish date / title are patched in process.
         if resolve_metadata and not channel_id:
@@ -395,6 +400,8 @@ def notification_entries_to_videos(
                     channel_name = meta.channel_name
                 if title == video_id and meta.title:
                     title = meta.title
+                if not description and meta.description:
+                    description = meta.description
         if not channel_id:
             logger.info("Skipping notification %s — no channel id", video_id)
             continue
@@ -409,6 +416,7 @@ def notification_entries_to_videos(
                 url=raw_url if "watch?v=" in raw_url else watch_url,
                 channel_id=channel_id,
                 channel_name=channel_name,
+                description=description,
             )
         )
         if len(videos) >= limit:
@@ -477,6 +485,7 @@ def _resolve_video_metadata(video_id: str) -> ResolvedVideoMeta | None:
                     published_date=_dict_published_date(info),
                     channel_name=_dict_channel_name(info),
                     title=str(info.get("title") or ""),
+                    description=_coerce_description(info.get("description")),
                 )
             except Exception as exc:
                 if _is_rate_limited_error(exc) and attempt < max_retries:
@@ -543,6 +552,30 @@ def parse_youtube_video_url(url: str) -> str | None:
             vid = parts[1]
             return vid if _VIDEO_ID_RE.fullmatch(vid) else None
     return None
+
+
+def _feed_description(entry: Any) -> str:
+    for key in ("media_description", "description", "summary"):
+        text = _coerce_description(getattr(entry, key, None))
+        if text:
+            return text
+    return ""
+
+
+def _coerce_description(value: Any) -> str:
+    if isinstance(value, list):
+        parts = [_coerce_description(item) for item in value]
+        return "\n".join(part for part in parts if part).strip()
+    if isinstance(value, dict):
+        for key in ("content", "value", "description"):
+            text = _coerce_description(value.get(key))
+            if text:
+                return text
+        return ""
+    if not isinstance(value, str):
+        return ""
+    text = html.unescape(_VTT_TAG.sub("", value))
+    return text.strip()
 
 
 def _entry_video_id(entry: Any) -> str | None:

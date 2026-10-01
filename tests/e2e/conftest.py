@@ -59,6 +59,7 @@ def _seed_archive(db_path: Path) -> None:
         key_takeaways=["Inclination matters", "Delta-v is scarce"],
         topics=["space", "physics"],
         relevance="high",
+        description="Orbital mechanics shownotes and reference links.",
         db_path=db_path,
     )
     upsert_seen(
@@ -130,6 +131,19 @@ def live_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
         api_module,
         "ask_across_videos",
         lambda question, videos: "Orbitals matter for mission planning.",
+    )
+    monkeypatch.setattr(
+        api_module,
+        "search_web",
+        lambda question, video=None: (
+            [{"title": "NASA update", "url": "https://www.nasa.gov/example", "snippet": "Recent mission news."}],
+            "tavily",
+        ),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "ask_about_video",
+        lambda video, messages, web_hits=None: "Inclination and delta-v drive mission design.",
     )
     monkeypatch.setattr(
         api_module,
