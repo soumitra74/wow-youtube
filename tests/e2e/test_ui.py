@@ -87,6 +87,58 @@ def test_video_detail_shows_summary_takeaways_and_transcript(page: Page, live_se
     expect(page.locator("#detail-transcript")).to_contain_text("Full orbital mechanics transcript.")
 
 
+def _select_text(locator, text: str) -> None:
+    locator.evaluate(
+        """(el, text) => {
+          const node = el.firstChild;
+          const start = node && node.textContent ? node.textContent.indexOf(text) : -1;
+          if (start < 0) throw new Error("text not found: " + text);
+          const range = document.createRange();
+          range.setStart(node, start);
+          range.setEnd(node, start + text.length);
+          const selection = window.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }""",
+        text,
+    )
+
+
+def test_enter_on_highlighted_detail_text_opens_google_search(page: Page, live_server: str) -> None:
+    _open_browse(page, live_server)
+    page.get_by_role("button", name="A walkthrough of orbital mechanics.").click()
+    summary = page.locator("#detail-long-summary")
+    expect(summary).to_contain_text("mission planning")
+    page.evaluate(
+        """() => {
+          window.__opened = [];
+          window.open = (url) => {
+            window.__opened.push(String(url));
+            return { closed: false, close() {} };
+          };
+        }"""
+    )
+    _select_text(summary, "mission planning")
+    page.keyboard.press("Enter")
+    expect(page.locator("#video-detail")).to_be_visible()
+    opened = page.evaluate("() => window.__opened")
+    assert opened == ["https://www.google.com/search?q=mission%20planning"]
+
+
+def test_enter_without_highlighted_text_does_not_search(page: Page, live_server: str) -> None:
+    _open_browse(page, live_server)
+    page.get_by_role("button", name="A walkthrough of orbital mechanics.").click()
+    summary = page.locator("#detail-long-summary")
+    expect(summary).to_be_visible()
+    summary.click()
+    page.evaluate("() => window.getSelection()?.removeAllRanges()")
+    popups: list = []
+    page.on("popup", lambda popup: popups.append(popup))
+    page.keyboard.press("Enter")
+    expect(page.locator("#video-detail")).to_be_visible()
+    assert popups == []
+
+
 def test_watched_toggle_can_filter_browse_results(page: Page, live_server: str) -> None:
     _open_browse(page, live_server)
     row = page.locator("#video-rows tr", has_text=ORBITALS_TITLE)
