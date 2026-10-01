@@ -143,7 +143,9 @@ def test_extract_verifiable_facts_uses_summary_fields(monkeypatch) -> None:
     )
     assert facts == ["Artemis II crew includes Reid Wiseman"]
     assert "Reid Wiseman is the commander." in captured["prompt"]
-    assert "Crew is assigned" in captured["prompt"]
+    assert "Crew is assigned" not in captured["prompt"]
+    assert "Topics:" not in captured["prompt"]
+    assert "Short summary:" not in captured["prompt"]
     assert "{max_facts}" not in captured["prompt"]
 
 

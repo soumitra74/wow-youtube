@@ -83,18 +83,13 @@ def extract_verifiable_facts(*, video: dict[str, Any]) -> list[str]:
     if not settings.ANTHROPIC_API_KEY:
         raise SummarizeError("ANTHROPIC_API_KEY is not set")
 
-    takeaways = video.get("key_takeaways") or []
-    takeaway_lines = "\n".join(f"- {item}" for item in takeaways) if takeaways else "(none)"
     template = load_template(settings.EXTRACT_FACTS_PROMPT_PATH)
     prompt = render_template(
         template,
         title=str(video.get("title") or ""),
         channel_name=str(video.get("channel_name") or ""),
         published_date=str(video.get("published_date") or ""),
-        topics=", ".join(video.get("topics") or []),
-        summary=str(video.get("summary") or ""),
         long_summary=str(video.get("long_summary") or video.get("summary") or ""),
-        key_takeaways=takeaway_lines,
         max_facts=str(settings.VERIFY_MAX_FACTS),
     )
     raw = _complete(settings.CLAUDE_SUMMARIZE_MODEL, prompt, max_tokens=1024)

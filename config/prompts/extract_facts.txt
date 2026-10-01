@@ -15,9 +15,5 @@ Rules:
 Video title: {title}
 Channel: {channel_name}
 Published: {published_date}
-Topics: {topics}
-Short summary: {summary}
 Detailed summary:
 {long_summary}
-Key takeaways:
-{key_takeaways}
