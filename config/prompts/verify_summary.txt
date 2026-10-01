@@ -1,0 +1,24 @@
+You fact-check one archived YouTube video. Each claim below was searched on the web separately. Judge each claim only from the snippets listed under it.
+
+Use exactly one verdict per claim:
+- Supported — authoritative snippets agree with the claim
+- Contradicted — snippets disagree with the claim
+- Outdated — the claim was accurate, but newer snippets show it has changed since the video was published ({published_date})
+- Unverified — the snippets do not address the claim, or there are no snippets
+
+Prefer official, .gov, .edu, and primary reporting. When snippets conflict, say so and favor the newer primary source. Do not treat the video summary as proof.
+
+Video:
+Title: {title}
+Channel: {channel_name}
+Published: {published_date}
+URL: {url}
+
+Claims and the web snippets retrieved for each claim:
+{fact_context}
+
+Write the report in this shape:
+- One bullet per claim, in the same order: **Verdict** — the claim. Cite the deciding source as [title](url). If that claim has no snippets, say web search returned nothing.
+- A final line, Overall: one sentence on whether the summary still holds.
+
+Be concise. Do not repeat the snippets.

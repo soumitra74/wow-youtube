@@ -48,6 +48,17 @@ def test_channel_filter_shows_only_that_channel(page: Page, live_server: str) ->
     expect(page.get_by_role("link", name=ORBITALS_TITLE)).to_have_count(0)
 
 
+def test_verify_summary_checks_each_claim(page: Page, live_server: str) -> None:
+    _open_browse(page, live_server)
+    page.get_by_role("button", name="A walkthrough of orbital mechanics.").click()
+    page.get_by_role("button", name="Verify summary via web").click()
+    expect(page.locator("#detail-chat-log .chat-bubble.user")).to_contain_text("Verify summary via web")
+    expect(page.locator("#detail-chat-log .chat-bubble.assistant")).to_contain_text(
+        "Supported — inclination changes launch cost."
+    )
+    expect(page.locator("#detail-chat-log .chat-web-footnote")).to_contain_text("NASA update")
+
+
 def test_video_detail_chat_returns_stubbed_answer(page: Page, live_server: str) -> None:
     _open_browse(page, live_server)
     page.get_by_role("button", name="A walkthrough of orbital mechanics.").click()

@@ -1,0 +1,23 @@
+Extract checkable factual claims from this YouTube video summary. Each claim will be sent as its own web search.
+
+Return JSON only, with this shape:
+{"facts": ["claim", "claim"]}
+
+Rules:
+- One atomic claim per item: a single who, what, when, where, or number that an outside source could confirm or contradict.
+- Phrase each claim as a standalone search query. Include the specific names, dates, places, and figures from the summary. Do not use pronouns such as "it" or "they" unless the referent is in the same sentence.
+- Include claims that may have changed since the video was published.
+- Skip opinions, advice, jokes, vague topic labels, and predictions stated as opinion.
+- Skip claims that only describe the video ("the host argues that"). State the underlying factual claim.
+- Return at most {max_facts} claims, most important first. If nothing is checkable, return {"facts": []}.
+- Do not add claims that are not in the summary.
+
+Video title: {title}
+Channel: {channel_name}
+Published: {published_date}
+Topics: {topics}
+Short summary: {summary}
+Detailed summary:
+{long_summary}
+Key takeaways:
+{key_takeaways}

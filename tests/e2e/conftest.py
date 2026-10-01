@@ -147,6 +147,34 @@ def live_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     )
     monkeypatch.setattr(
         api_module,
+        "extract_verifiable_facts",
+        lambda *, video: ["Inclination changes launch cost."],
+    )
+    monkeypatch.setattr(
+        api_module,
+        "search_facts",
+        lambda *, facts, video=None: [
+            {
+                "fact": fact,
+                "hits": [
+                    {
+                        "title": "NASA update",
+                        "url": "https://www.nasa.gov/example",
+                        "snippet": "Recent mission news.",
+                    }
+                ],
+                "provider": "tavily",
+            }
+            for fact in facts
+        ],
+    )
+    monkeypatch.setattr(
+        api_module,
+        "verify_video_summary",
+        lambda *, video, fact_bundles: "Supported — inclination changes launch cost.",
+    )
+    monkeypatch.setattr(
+        api_module,
         "run_latest",
         lambda: {"inbox_rows": 2, "scanned": 2, "processed": 1, "skipped": 1, "failed": 0},
     )

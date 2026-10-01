@@ -14,8 +14,14 @@ from pydantic import BaseModel, Field, field_validator
 from wow_core import settings
 from wow_core.logging_setup import configure_server_logging
 from wow_core.chroma_store import delete_summary, query_similar
-from wow_core.claude_client import SummarizeError, ask_about_video, ask_across_videos
-from wow_core.web_search import search_web
+from wow_core.claude_client import (
+    SummarizeError,
+    ask_about_video,
+    ask_across_videos,
+    extract_verifiable_facts,
+    verify_video_summary,
+)
+from wow_core.web_search import search_facts, search_web
 from wow_core.db import (
     delete_video,
     get_video,
@@ -173,6 +179,7 @@ class ChatMessage(BaseModel):
 class VideoChatBody(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1)
     web_search: bool = True
+    verify: bool = False
 
 
 @app.post("/api/video/{video_id}/chat")
@@ -198,19 +205,21 @@ def api_video_chat(video_id: str, body: VideoChatBody) -> dict[str, Any]:
 
     web_hits: list[dict[str, Any]] = []
     web_provider: str | None = None
-    if body.web_search:
-        web_hits, web_provider = search_web(question=latest_user, video=video)
-
     try:
-        answer = ask_about_video(video=video, messages=messages, web_hits=web_hits or None)
+        if body.verify:
+            facts = extract_verifiable_facts(video=video)
+            bundles = search_facts(facts=facts, video=video) if facts else []
+            answer = verify_video_summary(video=video, fact_bundles=bundles)
+            web_hits = [hit for bundle in bundles for hit in (bundle.get("hits") or [])]
+            web_provider = _join_providers(bundles)
+        else:
+            if body.web_search:
+                web_hits, web_provider = search_web(question=latest_user, video=video)
+            answer = ask_about_video(video=video, messages=messages, web_hits=web_hits or None)
     except SummarizeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    web_sources = [
-        {"title": hit.get("title") or hit.get("url"), "url": hit.get("url")}
-        for hit in web_hits
-        if hit.get("url")
-    ]
+    web_sources = _web_sources_from_hits(web_hits)
     chat_transcript: list[dict[str, Any]] = []
     for msg in messages:
         entry: dict[str, Any] = {"role": msg["role"], "content": msg["content"]}
@@ -229,11 +238,33 @@ def api_video_chat(video_id: str, body: VideoChatBody) -> dict[str, Any]:
 
     return {
         "answer": answer,
-        "web_search": body.web_search,
+        "web_search": True if body.verify else body.web_search,
         "web_provider": web_provider,
         "web_sources": web_sources,
         "chat_transcript": chat_transcript,
     }
+
+
+def _web_sources_from_hits(hits: list[dict[str, Any]]) -> list[dict[str, str]]:
+    sources: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for hit in hits:
+        url = str(hit.get("url") or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        title = str(hit.get("title") or url).strip() or url
+        sources.append({"title": title, "url": url})
+    return sources
+
+
+def _join_providers(bundles: list[dict[str, Any]]) -> str | None:
+    providers: list[str] = []
+    for bundle in bundles:
+        provider = bundle.get("provider")
+        if provider and provider not in providers:
+            providers.append(str(provider))
+    return "+".join(providers) if providers else None
 
 
 @app.post("/api/answers")

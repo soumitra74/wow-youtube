@@ -273,6 +273,102 @@ def test_video_chat_skips_web_when_disabled(monkeypatch) -> None:
     assert payload["web_sources"] == []
 
 
+def test_video_chat_verify_searches_each_fact(monkeypatch) -> None:
+    video = {
+        "video_id": "v1",
+        "title": "Demo",
+        "url": "https://example.com/v1",
+        "summary": "Short",
+        "long_summary": "Long",
+    }
+    facts = ["Artemis II crew includes Reid Wiseman", "Starship reached orbit in 2024"]
+    monkeypatch.setattr(api_module, "get_video", lambda video_id: video if video_id == "v1" else None)
+    monkeypatch.setattr(api_module, "extract_verifiable_facts", lambda *, video: facts)
+
+    def fail_search(*_args, **_kwargs):
+        raise AssertionError("chat search_web should not run during verification")
+
+    monkeypatch.setattr(api_module, "search_web", fail_search)
+    monkeypatch.setattr(
+        api_module,
+        "search_facts",
+        lambda *, facts, video=None: [
+            {
+                "fact": facts[0],
+                "hits": [{"title": "NASA", "url": "https://www.nasa.gov/a", "snippet": "yes"}],
+                "provider": "tavily",
+            },
+            {
+                "fact": facts[1],
+                "hits": [
+                    {"title": "NASA", "url": "https://www.nasa.gov/a", "snippet": "yes"},
+                    {"title": "Reuters", "url": "https://www.reuters.com/b", "snippet": "orbit"},
+                ],
+                "provider": "firecrawl",
+            },
+        ],
+    )
+    captured: dict = {}
+
+    def verify(*, video, fact_bundles):
+        captured["facts"] = [bundle["fact"] for bundle in fact_bundles]
+        return "**Supported** — both claims."
+
+    monkeypatch.setattr(api_module, "verify_video_summary", verify)
+
+    def fail_ask(*_args, **_kwargs):
+        raise AssertionError("ask_about_video should not run")
+
+    monkeypatch.setattr(api_module, "ask_about_video", fail_ask)
+    monkeypatch.setattr(api_module, "set_video_chat_transcript", lambda _vid, _t: True)
+
+    payload = api_module.api_video_chat(
+        "v1",
+        api_module.VideoChatBody(
+            messages=[
+                api_module.ChatMessage(
+                    role="user",
+                    content="Verify this video's summary against current web sources.",
+                    display="Verify summary via web",
+                )
+            ],
+            verify=True,
+            web_search=False,
+        ),
+    )
+
+    assert payload["answer"] == "**Supported** — both claims."
+    assert payload["web_search"] is True
+    assert payload["web_provider"] == "tavily+firecrawl"
+    assert captured["facts"] == facts
+    assert payload["web_sources"] == [
+        {"title": "NASA", "url": "https://www.nasa.gov/a"},
+        {"title": "Reuters", "url": "https://www.reuters.com/b"},
+    ]
+
+
+def test_video_chat_verify_with_no_facts_skips_search(monkeypatch) -> None:
+    video = {"video_id": "v1", "title": "Demo", "summary": "Short", "long_summary": "Long", "url": ""}
+    monkeypatch.setattr(api_module, "get_video", lambda _video_id: video)
+    monkeypatch.setattr(api_module, "extract_verifiable_facts", lambda *, video: [])
+
+    def fail_search(*_args, **_kwargs):
+        raise AssertionError("search should not run")
+
+    monkeypatch.setattr(api_module, "search_facts", fail_search)
+    monkeypatch.setattr(api_module, "set_video_chat_transcript", lambda _vid, _t: True)
+
+    payload = api_module.api_video_chat(
+        "v1",
+        api_module.VideoChatBody(
+            messages=[api_module.ChatMessage(role="user", content="Verify this video's summary.")],
+            verify=True,
+        ),
+    )
+    assert "no specific claims" in payload["answer"]
+    assert payload["web_sources"] == []
+
+
 def test_video_chat_returns_404_for_unknown_video(monkeypatch) -> None:
     monkeypatch.setattr(api_module, "get_video", lambda _video_id: None)
 

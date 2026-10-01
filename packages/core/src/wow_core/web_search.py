@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Literal
 from urllib.error import HTTPError, URLError
@@ -56,9 +57,14 @@ _AUTHORITY_PENALTY: tuple[tuple[str, int], ...] = (
 _MIN_AUTHORITY_SCORE = -5
 
 
-def search_web(*, question: str, video: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], str | None]:
+def search_web(
+    *,
+    question: str,
+    video: dict[str, Any] | None = None,
+    purpose: Literal["chat", "fact"] = "chat",
+) -> tuple[list[dict[str, Any]], str | None]:
     """Return ranked web hits and the provider name used (if any)."""
-    query = _build_search_query(question.strip(), video)
+    query = _build_search_query(question.strip(), video, purpose=purpose)
     if not query:
         return [], None
 
@@ -66,19 +72,43 @@ def search_web(*, question: str, video: dict[str, Any] | None = None) -> tuple[l
     if not providers:
         return [], None
 
+    apply_recency = purpose != "fact" or bool(_TIME_SENSITIVE.search(question))
     primary = _pick_provider(providers)
-    hits, provider = _search_with_provider(primary, query, question)
+    hits, provider = _search_with_provider(primary, query, question, apply_recency=apply_recency)
     if hits:
         return _finalize_hits(hits), provider
 
     fallback = _other_provider(primary, providers)
     if fallback:
         logger.warning("Web search provider %s failed or returned no hits; trying %s", primary, fallback)
-        hits, provider = _search_with_provider(fallback, query, question)
+        hits, provider = _search_with_provider(fallback, query, question, apply_recency=apply_recency)
         if hits:
             return _finalize_hits(hits), provider
 
     return [], primary
+
+
+def search_facts(
+    *,
+    facts: list[str],
+    video: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Search each claim separately. Result order matches ``facts``."""
+    cleaned = [fact.strip() for fact in facts if fact and fact.strip()]
+    if not cleaned:
+        return []
+
+    logger.info("Searching %d summary claims", len(cleaned))
+
+    def one(fact: str) -> dict[str, Any]:
+        hits, provider = search_web(question=fact, video=video, purpose="fact")
+        return {"fact": fact, "hits": hits, "provider": provider}
+
+    workers = min(4, len(cleaned))
+    if workers == 1:
+        return [one(cleaned[0])]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(one, cleaned))
 
 
 def _configured_providers() -> list[Provider]:
@@ -107,7 +137,12 @@ def _other_provider(current: Provider, providers: list[Provider]) -> Provider | 
     return None
 
 
-def _build_search_query(question: str, video: dict[str, Any] | None) -> str:
+def _build_search_query(
+    question: str,
+    video: dict[str, Any] | None,
+    *,
+    purpose: Literal["chat", "fact"] = "chat",
+) -> str:
     parts = [question]
     if video:
         title = str(video.get("title") or "").strip()
@@ -121,7 +156,7 @@ def _build_search_query(question: str, video: dict[str, Any] | None) -> str:
     year = str(datetime.now(timezone.utc).year)
     if _TIME_SENSITIVE.search(question):
         query = f"{query} latest {year}"
-    elif _looks_factual(question):
+    elif purpose == "chat" and _looks_factual(question):
         query = f"{query} {year}"
 
     return query.strip()
@@ -139,26 +174,29 @@ def _search_with_provider(
     provider: Provider,
     query: str,
     question: str,
+    *,
+    apply_recency: bool,
 ) -> tuple[list[dict[str, Any]], Provider]:
     try:
         if provider == "tavily":
-            return _search_tavily(query, question), provider
+            return _search_tavily(query, question, apply_recency=apply_recency), provider
         return _search_firecrawl(query), provider
     except (HTTPError, URLError, TimeoutError, OSError, ValueError, KeyError, TypeError) as exc:
         logger.warning("Web search via %s failed: %s", provider, exc)
         return [], provider
 
 
-def _search_tavily(query: str, question: str) -> list[dict[str, Any]]:
+def _search_tavily(query: str, question: str, *, apply_recency: bool) -> list[dict[str, Any]]:
     topic = "news" if _TIME_SENSITIVE.search(question) else "general"
     body: dict[str, Any] = {
         "api_key": settings.TAVILY_API_KEY,
         "query": query,
         "max_results": max(settings.WEB_SEARCH_MAX_RESULTS * 2, 8),
         "search_depth": "advanced",
-        "days": settings.WEB_SEARCH_RECENCY_DAYS,
         "topic": topic,
     }
+    if apply_recency:
+        body["days"] = settings.WEB_SEARCH_RECENCY_DAYS
     if settings.WEB_SEARCH_INCLUDE_DOMAINS:
         body["include_domains"] = settings.WEB_SEARCH_INCLUDE_DOMAINS
     if settings.WEB_SEARCH_EXCLUDE_DOMAINS:
@@ -262,6 +300,11 @@ def _authority_score(url: str) -> int:
     return score
 
 
-def build_search_query_for_tests(question: str, video: dict[str, Any] | None = None) -> str:
+def build_search_query_for_tests(
+    question: str,
+    video: dict[str, Any] | None = None,
+    *,
+    purpose: Literal["chat", "fact"] = "chat",
+) -> str:
     """Expose query shaping for unit tests."""
-    return _build_search_query(question, video)
+    return _build_search_query(question, video, purpose=purpose)

@@ -28,6 +28,9 @@ PROMPTS_DIR = CONFIG_DIR / "prompts"
 SUMMARIZE_PROMPT_PATH = PROMPTS_DIR / "summarize.txt"
 ASK_PROMPT_PATH = PROMPTS_DIR / "ask.txt"
 VIDEO_CHAT_PROMPT_PATH = PROMPTS_DIR / "video_chat.txt"
+EXTRACT_FACTS_PROMPT_PATH = PROMPTS_DIR / "extract_facts.txt"
+VERIFY_SUMMARY_PROMPT_PATH = PROMPTS_DIR / "verify_summary.txt"
+VERIFY_MAX_FACTS = int(os.getenv("VERIFY_MAX_FACTS", "8"))
 
 DB_PATH = DATA_DIR / "wow.db"
 CHROMA_DIR = DATA_DIR / "chroma"
