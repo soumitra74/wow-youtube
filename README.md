@@ -22,6 +22,8 @@ During inbox scan, yt-dlp may log **Video unavailable** for old notification row
 
 **SyncRun API (`/api/videos`):** `POST` starts inbox sync (refresh icon in the UI). `GET` only reads job status—the UI polls it while a run is active; it does not start another sync. Archived videos are `GET /api/video` (singular).
 
+**Delete video:** `DELETE /api/video/{video_id}` hard-deletes the archived row and its Chroma summary. There is no soft-delete flag. The `seen` row is kept, so the poller will not process that video again. If removing the Chroma entry fails, the database row is left in place.
+
 `docker-compose.override.yml` bind-mounts `apps/`, `packages/`, `config/`, and `data/` and enables uvicorn `--reload`. Rebuild the image when Python dependencies change (includes Deno + `yt-dlp-ejs` for YouTube JS challenges). The image uses CPU PyTorch so Linux does not pull CUDA libraries.
 
 Runtime settings live in `.env` (copy from `.env.example`). Poll budget:
