@@ -23,11 +23,13 @@ from wow_core.logging_setup import configure_poller_logging
 from wow_core.youtube import (
     FeedVideo,
     TranscriptUnavailable,
+    external_platform,
     fetch_channel_feed,
     get_transcript,
     merge_inbox_and_playlist_videos,
-    parse_youtube_video_url,
+    parse_media_url,
     patch_published_date_if_missing,
+    resolve_external_metadata,
     truncate_transcript,
     _resolve_video_metadata,
 )
@@ -106,6 +108,8 @@ def run_poll(
     stopped_early = False
 
     for channel in list_channels():
+        if channel["channel_id"].startswith(("ig:", "x:")):
+            continue
         try:
             videos = fetch_channel_feed(channel["channel_id"], channel["rss_url"])
         except Exception as exc:
@@ -223,45 +227,54 @@ def run_fetch_url(url: str, *, retry_errors: bool = False) -> dict[str, Any]:
     settings.ensure_data_dirs()
     init_db()
 
-    video_id = parse_youtube_video_url(url)
-    if not video_id:
-        raise ValueError("Invalid YouTube URL")
+    media = parse_media_url(url)
+    if not media:
+        raise ValueError("Paste a YouTube, Instagram Reel, or X post URL")
 
     prog = active_progress()
-    watch_url = f"https://www.youtube.com/watch?v={video_id}"
-    title = video_id
-    channel_id = ""
-    channel_name = ""
-    published_date = ""
-    description = ""
-
-    if prog:
-        prog.update("metadata", f"Resolving metadata for {video_id}…")
-    meta = _resolve_video_metadata(video_id)
-    if meta:
-        if meta.title.strip():
-            title = meta.title.strip()
+    if media.platform == "youtube":
+        title = media.video_id
+        channel_id = ""
+        channel_name = ""
+        published_date = ""
+        description = ""
+        if prog:
+            prog.update("metadata", f"Resolving metadata for {media.video_id}…")
+        meta = _resolve_video_metadata(media.video_id)
+        if meta:
+            if meta.title.strip():
+                title = meta.title.strip()
+            channel_id = meta.channel_id or ""
+            channel_name = meta.channel_name or ""
+            published_date = meta.published_date or ""
+            description = (getattr(meta, "description", "") or "").strip()
+        if not channel_id:
+            raise ValueError(f"Could not resolve channel for {media.video_id}")
+    else:
+        if prog:
+            prog.update("metadata", f"Resolving metadata for {media.video_id}…")
+        meta = resolve_external_metadata(media)
+        title = meta.title.strip() or media.video_id
         channel_id = meta.channel_id or ""
         channel_name = meta.channel_name or ""
         published_date = meta.published_date or ""
-        description = (getattr(meta, "description", "") or "").strip()
-
-    if not channel_id:
-        raise ValueError(f"Could not resolve channel for {video_id}")
+        description = (meta.description or "").strip()
+        if not channel_id:
+            raise ValueError(f"Could not resolve account for {media.video_id}")
 
     channel_name = channel_name or channel_id
     sync_channels([{"channel_id": channel_id, "channel_name": channel_name}])
     video = FeedVideo(
-        video_id=video_id,
+        video_id=media.video_id,
         title=title,
         published_date=published_date,
-        url=watch_url,
+        url=media.url,
         channel_id=channel_id,
         channel_name=channel_name,
         description=description,
     )
     if prog:
-        prog.update("process", f"Processing {title[:80]} ({video_id})")
+        prog.update("process", f"Processing {title[:80]} ({media.video_id})")
     outcome = _process_video(
         video,
         {"channel_id": channel_id, "channel_name": channel_name},
@@ -272,7 +285,7 @@ def run_fetch_url(url: str, *, retry_errors: bool = False) -> dict[str, Any]:
     skipped_n = 1 if outcome == "skipped" else 0
     failed_n = 1 if outcome == "failed" else 0
     return {
-        "video_id": video_id,
+        "video_id": media.video_id,
         "scanned": 1,
         "fetched": 1,
         "inbox_rows": 1,
@@ -281,6 +294,13 @@ def run_fetch_url(url: str, *, retry_errors: bool = False) -> dict[str, Any]:
         "failed": failed_n,
         "outcome": outcome,
     }
+
+
+def _prompt_transcript(video_id: str, spoken: str, description: str) -> str:
+    post_text = description.strip()
+    if external_platform(video_id) and post_text:
+        return f"Post text:\n{post_text}\n\nSpoken transcript:\n{spoken}"
+    return spoken
 
 
 def _process_video(
@@ -302,7 +322,7 @@ def _process_video(
 
     published_date = (video.published_date or "").strip()
     description = str(getattr(video, "description", "") or "").strip()
-    if not published_date or not description:
+    if (not published_date or not description) and external_platform(video.video_id) is None:
         meta = _resolve_video_metadata(video.video_id)
         if meta:
             if not published_date and meta.published_date.strip():
@@ -314,10 +334,14 @@ def _process_video(
     try:
         if progress:
             progress.update("transcript", f"Fetching transcript for {video.video_id}…")
-        transcript = get_transcript(video.video_id)
+        transcript = get_transcript(video.video_id, media_url=video.url)
         if progress:
             progress.update("summarize", f"Summarizing {video.video_id} via Claude…")
         text, truncated = truncate_transcript(transcript.text)
+        prompt_text = _prompt_transcript(video.video_id, text, description)
+        if prompt_text != text:
+            prompt_text, prompt_truncated = truncate_transcript(prompt_text)
+            truncated = truncated or prompt_truncated
         if truncated:
             logger.warning("Truncated transcript for %s to %s chars", video.video_id, len(text))
 
@@ -326,7 +350,7 @@ def _process_video(
             channel_name=channel["channel_name"],
             published_date=published_date,
             url=video.url,
-            transcript=text,
+            transcript=prompt_text,
         )
         upsert_seen(
             video_id=video.video_id,

@@ -12,3 +12,5 @@ build/
 .uv/
 config/youtube_cookies.txt
 cookies.txt
+scripts/*.json
+scripts/_probe_out/**

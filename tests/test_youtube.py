@@ -820,3 +820,306 @@ def test_whisper_maps_reload_failure_to_unavailable(tmp_path: Path, monkeypatch)
     monkeypatch.setattr("wow_core.youtube._youtube_dl", lambda: type("M", (), {"YoutubeDL": FakeYDL}))
     with pytest.raises(TranscriptUnavailable, match="page needs to be reloaded"):
         _transcribe_with_whisper("aaaaaaaaaaa", max_minutes=90)
+
+
+def test_parse_media_url() -> None:
+    from wow_core.youtube import parse_media_url
+
+    youtube = parse_media_url("https://www.youtube.com/watch?v=bbbbbbbbbbb")
+    assert youtube is not None
+    assert youtube.platform == "youtube"
+    assert youtube.video_id == "bbbbbbbbbbb"
+    assert youtube.url == "https://www.youtube.com/watch?v=bbbbbbbbbbb"
+
+    bare = parse_media_url("aaaaaaaaaaa")
+    assert bare is not None
+    assert bare.platform == "youtube"
+    assert bare.video_id == "aaaaaaaaaaa"
+
+    reel = parse_media_url("https://www.instagram.com/reel/DUl354timp1/?igsh=1")
+    assert reel is not None
+    assert reel.platform == "instagram"
+    assert reel.video_id == "ig:DUl354timp1"
+    assert reel.url == "https://www.instagram.com/reel/DUl354timp1/"
+
+    reels = parse_media_url("https://instagram.com/reels/DUl354timp1")
+    assert reels is not None
+    assert reels.url == "https://www.instagram.com/reel/DUl354timp1/"
+
+    post = parse_media_url("https://www.instagram.com/p/ABC123xyz_/")
+    assert post is not None
+    assert post.platform == "instagram"
+    assert post.video_id == "ig:ABC123xyz_"
+    assert post.url == "https://www.instagram.com/p/ABC123xyz_/"
+
+    mobile_reel = parse_media_url("https://m.instagram.com/reel/DUl354timp1/")
+    assert mobile_reel is not None
+    assert mobile_reel.video_id == "ig:DUl354timp1"
+
+    assert parse_media_url("https://www.instagram.com/share/BAGxYZ") is None
+
+    status = parse_media_url("https://x.com/kobaHUB/status/2107026299776532653")
+    assert status is not None
+    assert status.platform == "x"
+    assert status.video_id == "x:2107026299776532653"
+    assert status.url == "https://x.com/i/status/2107026299776532653"
+
+    twitter = parse_media_url("https://twitter.com/i/status/2107026299776532653?s=20")
+    assert twitter is not None
+    assert twitter.video_id == status.video_id
+    assert twitter.url == status.url
+
+    mobile = parse_media_url("https://mobile.twitter.com/kobaHUB/status/2107026299776532653")
+    assert mobile is not None
+    assert mobile.video_id == status.video_id
+
+    assert parse_media_url("not-a-url") is None
+
+
+def _install_external_ydl(monkeypatch, extract):
+    created: list[dict] = []
+
+    class FakeYDL:
+        def __init__(self, opts):
+            self.opts = opts
+            created.append(opts)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=False):
+            return extract(self.opts, url, download)
+
+        def download(self, urls):
+            raise AssertionError("metadata extract should not download")
+
+    monkeypatch.setattr(
+        "wow_core.youtube._youtube_dl",
+        lambda: type("M", (), {"YoutubeDL": FakeYDL}),
+    )
+    return created
+
+
+def _twitter_api(opts: dict):
+    return ((opts.get("extractor_args") or {}).get("twitter") or {}).get("api")
+
+
+def test_x_extract_retries_legacy_then_syndication(monkeypatch) -> None:
+    from wow_core.youtube import ParsedMedia, resolve_external_metadata
+
+    def extract(opts, url, download):
+        if _twitter_api(opts) == ["syndication"]:
+            return {
+                "duration": 30,
+                "uploader_id": "kobaHUB",
+                "uploader": "koba",
+                "title": "Clip",
+                "description": "Jack Ma told Elon Musk.",
+                "upload_date": "20261005",
+            }
+        raise RuntimeError("guest token failed")
+
+    created = _install_external_ydl(monkeypatch, extract)
+    media = ParsedMedia(
+        platform="x",
+        video_id="x:2107026299776532653",
+        url="https://x.com/i/status/2107026299776532653",
+    )
+    meta = resolve_external_metadata(media)
+    assert [_twitter_api(opts) for opts in created] == [None, ["legacy"], ["syndication"]]
+    assert all("cookiefile" not in opts for opts in created)
+    assert all("youtube" not in (opts.get("extractor_args") or {}) for opts in created)
+    assert meta.channel_id == "x:kobaHUB"
+    assert meta.channel_name == "koba"
+    assert meta.title == "Clip"
+    assert meta.description == "Jack Ma told Elon Musk."
+    assert meta.published_date.startswith("2026-10-05")
+
+
+def test_x_extract_stops_when_post_has_no_video(monkeypatch) -> None:
+    from wow_core.youtube import ParsedMedia, resolve_external_metadata
+
+    def extract(opts, url, download):
+        return {"uploader_id": "someone", "description": "photo", "ext": "jpg"}
+
+    created = _install_external_ydl(monkeypatch, extract)
+    media = ParsedMedia(
+        platform="x",
+        video_id="x:2107026299776532653",
+        url="https://x.com/i/status/2107026299776532653",
+    )
+    with pytest.raises(ValueError, match="This post has no video"):
+        resolve_external_metadata(media)
+    assert len(created) == 1
+
+
+def test_x_extract_stops_when_extractor_reports_no_video(monkeypatch) -> None:
+    from wow_core.youtube import ParsedMedia, resolve_external_metadata
+
+    def extract(opts, url, download):
+        raise RuntimeError("[twitter] 1: No video could be found in this tweet")
+
+    created = _install_external_ydl(monkeypatch, extract)
+    media = ParsedMedia(
+        platform="x",
+        video_id="x:2107026299776532653",
+        url="https://x.com/i/status/2107026299776532653",
+    )
+    with pytest.raises(ValueError, match="This post has no video"):
+        resolve_external_metadata(media)
+    assert len(created) == 1
+
+
+def test_x_extract_stops_when_login_required(monkeypatch) -> None:
+    from wow_core.youtube import ParsedMedia, resolve_external_metadata
+
+    def extract(opts, url, download):
+        raise RuntimeError("You are not authorized to view this protected tweet. Use --cookies")
+
+    created = _install_external_ydl(monkeypatch, extract)
+    media = ParsedMedia(
+        platform="x",
+        video_id="x:2107026299776532653",
+        url="https://x.com/i/status/2107026299776532653",
+    )
+    with pytest.raises(ValueError, match="not available without login"):
+        resolve_external_metadata(media)
+    assert len(created) == 1
+
+
+def test_instagram_extract_does_not_retry_guest_failure(monkeypatch) -> None:
+    from wow_core.youtube import ParsedMedia, resolve_external_metadata
+
+    def extract(opts, url, download):
+        raise RuntimeError("timeout")
+
+    created = _install_external_ydl(monkeypatch, extract)
+    media = ParsedMedia(
+        platform="instagram",
+        video_id="ig:DUl354timp1",
+        url="https://www.instagram.com/reel/DUl354timp1/",
+    )
+    with pytest.raises(ValueError, match="Could not fetch this post"):
+        resolve_external_metadata(media)
+    assert len(created) == 1
+    assert "cookiefile" not in created[0]
+
+
+def test_get_transcript_external_skips_youtube_captions(monkeypatch) -> None:
+    def boom(*_args, **_kwargs):
+        raise AssertionError("youtube captions should not run")
+
+    monkeypatch.setattr("wow_core.youtube._fetch_youtube_captions", boom)
+    monkeypatch.setattr("wow_core.youtube._fetch_ytdlp_captions", boom)
+
+    def fake_whisper(video_id, *, max_minutes, media_url=None, platform=None):
+        assert video_id == "ig:DUl354timp1"
+        assert media_url == "https://www.instagram.com/reel/DUl354timp1/"
+        assert platform == "instagram"
+        return TranscriptResult(text="spoken reel", source="whisper")
+
+    monkeypatch.setattr("wow_core.youtube._transcribe_with_whisper", fake_whisper)
+    result = get_transcript(
+        "ig:DUl354timp1",
+        media_url="https://www.instagram.com/reel/DUl354timp1/",
+        generate_if_missing=True,
+    )
+    assert result.text == "spoken reel"
+    assert result.source == "whisper"
+
+
+def test_external_whisper_uses_media_url_without_cookies(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("wow_core.settings.WHISPER_DIR", tmp_path)
+    seen: dict[str, list] = {"urls": [], "opts": [], "downloads": []}
+
+    class FakeYDL:
+        def __init__(self, opts):
+            self.opts = opts
+            seen["opts"].append(opts)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=False):
+            seen["urls"].append(url)
+            return {"duration": 12}
+
+        def download(self, urls):
+            seen["downloads"].append(list(urls))
+            Path(self.opts["outtmpl"].replace("%(ext)s", "mp3")).write_bytes(b"audio")
+
+    class FakeSegment:
+        def __init__(self, text: str):
+            self.text = text
+
+    class FakeModel:
+        def transcribe(self, path, vad_filter=True):
+            return [FakeSegment("spoken reel")], None
+
+    monkeypatch.setattr("wow_core.youtube._youtube_dl", lambda: type("M", (), {"YoutubeDL": FakeYDL}))
+    monkeypatch.setattr("wow_core.youtube._load_whisper_model", lambda: FakeModel())
+    result = _transcribe_with_whisper(
+        "ig:DUl354timp1",
+        max_minutes=90,
+        media_url="https://www.instagram.com/reel/DUl354timp1/",
+        platform="instagram",
+    )
+    assert result.text == "spoken reel"
+    assert result.source == "whisper"
+    assert seen["urls"] == ["https://www.instagram.com/reel/DUl354timp1/"]
+    assert seen["downloads"] == [["https://www.instagram.com/reel/DUl354timp1/"]]
+    assert seen["opts"]
+    assert all("cookiefile" not in opts for opts in seen["opts"])
+    assert all("youtube" not in (opts.get("extractor_args") or {}) for opts in seen["opts"])
+
+
+def test_external_whisper_retries_x_apis_without_cookies(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("wow_core.settings.WHISPER_DIR", tmp_path)
+    apis: list = []
+
+    class FakeYDL:
+        def __init__(self, opts):
+            self.opts = opts
+            apis.append(_twitter_api(opts))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=False):
+            if _twitter_api(self.opts) != ["legacy"]:
+                raise RuntimeError("guest token failed")
+            return {"duration": 8}
+
+        def download(self, urls):
+            Path(self.opts["outtmpl"].replace("%(ext)s", "mp3")).write_bytes(b"audio")
+
+    class FakeSegment:
+        def __init__(self, text: str):
+            self.text = text
+
+    class FakeModel:
+        def transcribe(self, path, vad_filter=True):
+            return [FakeSegment("spoken post")], None
+
+    monkeypatch.setattr("wow_core.youtube._youtube_dl", lambda: type("M", (), {"YoutubeDL": FakeYDL}))
+    monkeypatch.setattr("wow_core.youtube._load_whisper_model", lambda: FakeModel())
+    result = _transcribe_with_whisper(
+        "x:2107026299776532653",
+        max_minutes=90,
+        media_url="https://x.com/i/status/2107026299776532653",
+        platform="x",
+    )
+    assert result.text == "spoken post"
+    assert None in apis
+    assert ["legacy"] in apis
+    assert ["syndication"] not in apis
+

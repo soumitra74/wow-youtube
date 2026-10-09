@@ -224,7 +224,7 @@ def test_fetch_latest_shows_stubbed_scan_status(page: Page, live_server: str) ->
 def test_fetch_url_requires_a_youtube_url(page: Page, live_server: str) -> None:
     _open_browse(page, live_server)
     page.get_by_role("button", name="Fetch Now").click()
-    expect(page.locator("#fetch-status")).to_have_text("Enter a YouTube URL")
+    expect(page.locator("#fetch-status")).to_have_text("Enter a YouTube, Instagram Reel, or X post URL")
 
 
 def test_fetch_url_shows_stubbed_video_outcome(page: Page, live_server: str) -> None:

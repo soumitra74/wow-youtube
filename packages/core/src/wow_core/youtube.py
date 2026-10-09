@@ -98,12 +98,31 @@ def get_transcript(
     *,
     generate_if_missing: bool | None = None,
     max_minutes: int | None = None,
+    media_url: str | None = None,
 ) -> TranscriptResult:
     generate = (
         settings.GENERATE_MISSING_TRANSCRIPTS
         if generate_if_missing is None
         else generate_if_missing
     )
+    platform = external_platform(video_id)
+    if platform:
+        if not generate:
+            raise TranscriptUnavailable("no captions for this post and generation disabled")
+        if not media_url:
+            raise TranscriptUnavailable("missing media URL for external video")
+        from wow_core.fetch_status import active_progress
+
+        prog = active_progress()
+        if prog:
+            prog.update("transcript", f"Whisper for {video_id} (download + transcribe)…")
+        limit = settings.WHISPER_MAX_MINUTES if max_minutes is None else max_minutes
+        return _transcribe_with_whisper(
+            video_id,
+            max_minutes=limit,
+            media_url=media_url,
+            platform=platform,
+        )
     _throttle_captions()
     caption = _fetch_youtube_captions(video_id)
     if caption:
@@ -219,11 +238,17 @@ def _ytdlp_core_opts() -> dict[str, Any]:
     return opts
 
 
-def _ytdlp_video_opts(*, cookiefile: str | None = None, **extra: Any) -> dict[str, Any]:
+def _ytdlp_video_opts(
+    *,
+    cookiefile: str | None = None,
+    youtube_clients: bool = True,
+    **extra: Any,
+) -> dict[str, Any]:
     opts = _ytdlp_core_opts()
-    opts["extractor_args"] = {
-        "youtube": {"player_client": _youtube_player_clients(cookies=bool(cookiefile))}
-    }
+    if youtube_clients:
+        opts["extractor_args"] = {
+            "youtube": {"player_client": _youtube_player_clients(cookies=bool(cookiefile))}
+        }
     opts.update(extra)
     if cookiefile:
         opts["cookiefile"] = cookiefile
@@ -552,6 +577,231 @@ def parse_youtube_video_url(url: str) -> str | None:
             vid = parts[1]
             return vid if _VIDEO_ID_RE.fullmatch(vid) else None
     return None
+
+
+_IG_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{5,30}$")
+_X_STATUS_RE = re.compile(r"^\d{5,}$")
+_VIDEO_EXTS = {"mp4", "webm", "mkv", "mov", "m4v"}
+_LOGIN_REQUIRED = "This post is not available without login"
+_NO_VIDEO = "This post has no video"
+
+
+@dataclass(frozen=True)
+class ParsedMedia:
+    platform: str  # youtube | instagram | x
+    video_id: str
+    url: str
+
+
+def external_platform(video_id: str) -> str | None:
+    if video_id.startswith("ig:"):
+        return "instagram"
+    if video_id.startswith("x:"):
+        return "x"
+    return None
+
+
+def parse_media_url(url: str) -> ParsedMedia | None:
+    raw = (url or "").strip()
+    if not raw:
+        return None
+    youtube_id = parse_youtube_video_url(raw)
+    if youtube_id:
+        return ParsedMedia(
+            platform="youtube",
+            video_id=youtube_id,
+            url=f"https://www.youtube.com/watch?v={youtube_id}",
+        )
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    host = (parsed.netloc or "").lower().removeprefix("www.").removeprefix("mobile.")
+    if host.startswith("m."):
+        host = host[2:]
+    parts = [part for part in parsed.path.split("/") if part]
+    if host == "instagram.com":
+        return _parse_instagram_path(parts)
+    if host in {"x.com", "twitter.com"}:
+        return _parse_x_path(parts)
+    return None
+
+
+def _parse_instagram_path(parts: list[str]) -> ParsedMedia | None:
+    if not parts or parts[0] == "share":
+        return None
+    kind = ""
+    code = ""
+    if parts[0] in {"reel", "reels", "p"} and len(parts) >= 2:
+        kind = "p" if parts[0] == "p" else "reel"
+        code = parts[1]
+    if not _IG_CODE_RE.fullmatch(code):
+        return None
+    canonical = f"https://www.instagram.com/{kind}/{code}/"
+    return ParsedMedia(platform="instagram", video_id=f"ig:{code}", url=canonical)
+
+
+def _parse_x_path(parts: list[str]) -> ParsedMedia | None:
+    status_id = ""
+    if len(parts) >= 3 and parts[1] == "status":
+        status_id = parts[2]
+    elif len(parts) >= 2 and parts[0] == "status":
+        status_id = parts[1]
+    if not _X_STATUS_RE.fullmatch(status_id):
+        return None
+    return ParsedMedia(
+        platform="x",
+        video_id=f"x:{status_id}",
+        url=f"https://x.com/i/status/{status_id}",
+    )
+
+
+def _external_extractor_attempts(platform: str) -> list[dict[str, Any] | None]:
+    if platform == "x":
+        return [
+            None,
+            {"twitter": {"api": ["legacy"]}},
+            {"twitter": {"api": ["syndication"]}},
+        ]
+    return [None]
+
+
+def _is_login_required_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    markers = (
+        "login",
+        "logged in",
+        "logged-in",
+        "cookies",
+        "not authorized",
+        "private",
+        "protected",
+        "sensitive",
+        "age-restricted",
+        "age restricted",
+        "empty media response",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _is_no_video_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return "no video" in text or "there is no video" in text
+
+
+def _entry_has_video(info: dict[str, Any]) -> bool:
+    duration = info.get("duration")
+    if isinstance(duration, (int, float)) and duration > 0:
+        return True
+    ext = str(info.get("ext") or "").lower()
+    if ext in _VIDEO_EXTS:
+        return True
+    for fmt in info.get("formats") or []:
+        if not isinstance(fmt, dict):
+            continue
+        vcodec = str(fmt.get("vcodec") or "")
+        if vcodec and vcodec != "none":
+            return True
+        if str(fmt.get("ext") or "").lower() in _VIDEO_EXTS:
+            return True
+    media_url = str(info.get("url") or "").split("?", 1)[0].lower()
+    return any(media_url.endswith(f".{ext}") for ext in _VIDEO_EXTS)
+
+
+def _select_video_info(info: dict[str, Any]) -> dict[str, Any] | None:
+    entries = info.get("entries")
+    if entries is not None:
+        if not isinstance(entries, list):
+            try:
+                entries = list(entries)
+            except TypeError:
+                entries = []
+        for entry in entries:
+            if isinstance(entry, dict) and _entry_has_video(entry):
+                merged = dict(entry)
+                for key in (
+                    "description",
+                    "title",
+                    "uploader",
+                    "uploader_id",
+                    "channel",
+                    "timestamp",
+                    "upload_date",
+                ):
+                    if not merged.get(key) and info.get(key):
+                        merged[key] = info[key]
+                return merged
+        return None
+    if _entry_has_video(info):
+        return info
+    return None
+
+
+def _external_handle(info: dict[str, Any]) -> str:
+    for key in ("uploader_id", "uploader", "channel"):
+        value = info.get(key)
+        if not isinstance(value, str):
+            continue
+        handle = value.strip().lstrip("@")
+        if handle and not handle.startswith("UC"):
+            return handle
+    return ""
+
+
+def _external_display_name(info: dict[str, Any], handle: str) -> str:
+    for key in ("uploader", "channel", "uploader_id"):
+        value = info.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return handle
+
+
+def resolve_external_metadata(media: ParsedMedia) -> ResolvedVideoMeta:
+    info = _extract_external_info(media.url, platform=media.platform)
+    handle = _external_handle(info)
+    prefix = "ig" if media.platform == "instagram" else "x"
+    description = _coerce_description(info.get("description"))
+    title = str(info.get("title") or "").strip()
+    if not title:
+        title = description.splitlines()[0].strip() if description else media.video_id
+    return ResolvedVideoMeta(
+        channel_id=f"{prefix}:{handle}" if handle else "",
+        published_date=_dict_published_date(info),
+        channel_name=_external_display_name(info, handle),
+        title=title,
+        description=description,
+    )
+
+
+def _extract_external_info(url: str, *, platform: str) -> dict[str, Any]:
+    yt_dlp = _youtube_dl()
+    last_exc: BaseException | None = None
+    for extractor_args in _external_extractor_attempts(platform):
+        extra: dict[str, Any] = {}
+        if extractor_args:
+            extra["extractor_args"] = extractor_args
+        opts = _ytdlp_video_opts(
+            cookiefile=None,
+            youtube_clients=False,
+            skip_download=True,
+            ignore_no_formats_error=True,
+            **extra,
+        )
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False) or {}
+        except Exception as exc:
+            if _is_no_video_error(exc):
+                raise ValueError(_NO_VIDEO) from exc
+            if _is_login_required_error(exc):
+                raise ValueError(_LOGIN_REQUIRED) from exc
+            last_exc = exc
+            logger.warning("External extract failed for %s: %s", url, exc)
+            continue
+        selected = _select_video_info(info if isinstance(info, dict) else {})
+        if selected is None:
+            raise ValueError(_NO_VIDEO)
+        return selected
+    if last_exc is None:
+        raise ValueError("Could not fetch this post")
+    raise ValueError(f"Could not fetch this post: {last_exc}") from last_exc
 
 
 def _feed_description(entry: Any) -> str:
@@ -888,9 +1138,24 @@ def _segment_text(segments: Any) -> str:
 
 
 def _download_whisper_audio(
-    yt_dlp: Any, url: str, tmp_dir: Path, cookiefile: str | None, *, max_minutes: int
+    yt_dlp: Any,
+    url: str,
+    tmp_dir: Path,
+    cookiefile: str | None,
+    *,
+    max_minutes: int,
+    extractor_args: dict[str, Any] | None = None,
+    youtube_clients: bool = True,
 ) -> float:
-    info_opts = _ytdlp_video_opts(cookiefile=cookiefile, skip_download=True)
+    extra: dict[str, Any] = {}
+    if extractor_args:
+        extra["extractor_args"] = extractor_args
+    info_opts = _ytdlp_video_opts(
+        cookiefile=cookiefile,
+        youtube_clients=youtube_clients,
+        skip_download=True,
+        **extra,
+    )
     with yt_dlp.YoutubeDL(info_opts) as ydl:
         info = ydl.extract_info(url, download=False) or {}
     duration = float(info.get("duration") or 0)
@@ -900,43 +1165,96 @@ def _download_whisper_audio(
         )
     ydl_opts = _ytdlp_video_opts(
         cookiefile=cookiefile,
+        youtube_clients=youtube_clients,
         format="bestaudio/bestaudio*/best/wa",
         outtmpl=str(tmp_dir / "audio.%(ext)s"),
         postprocessors=[
             {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "64"}
         ],
+        **extra,
     )
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
     return duration
 
 
-def _transcribe_with_whisper(video_id: str, *, max_minutes: int) -> TranscriptResult:
+def _download_external_whisper_audio(
+    yt_dlp: Any,
+    url: str,
+    tmp_dir: Path,
+    *,
+    platform: str,
+    max_minutes: int,
+) -> float:
+    last_exc: BaseException | None = None
+    for extractor_args in _external_extractor_attempts(platform):
+        try:
+            return _download_whisper_audio(
+                yt_dlp,
+                url,
+                tmp_dir,
+                None,
+                max_minutes=max_minutes,
+                extractor_args=extractor_args,
+                youtube_clients=False,
+            )
+        except TranscriptUnavailable:
+            raise
+        except Exception as exc:
+            if _is_no_video_error(exc):
+                raise TranscriptUnavailable(_NO_VIDEO) from exc
+            if _is_login_required_error(exc):
+                raise TranscriptUnavailable(_LOGIN_REQUIRED) from exc
+            last_exc = exc
+            logger.warning("Whisper audio download failed for %s: %s", url, exc)
+            if platform != "x":
+                break
+    raise TranscriptUnavailable(f"could not download audio for Whisper: {last_exc}") from last_exc
+
+
+def _transcribe_with_whisper(
+    video_id: str,
+    *,
+    max_minutes: int,
+    media_url: str | None = None,
+    platform: str | None = None,
+) -> TranscriptResult:
     yt_dlp = _youtube_dl()
-    url = f"https://www.youtube.com/watch?v={video_id}"
+    url = media_url or f"https://www.youtube.com/watch?v={video_id}"
     shard_seconds = settings.WHISPER_SHARD_MINUTES * 60
     overlap = settings.WHISPER_SHARD_OVERLAP_SECONDS
     with tempfile.TemporaryDirectory(prefix="wow-whisper-") as tmp:
         tmp_dir = Path(tmp)
         last_exc: BaseException | None = None
         duration = 0.0
-        with _copied_cookiefile() as cookiefile:
-            for cookies in _whisper_cookie_attempts(cookiefile):
-                try:
-                    duration = _download_whisper_audio(
-                        yt_dlp, url, tmp_dir, cookies, max_minutes=max_minutes
-                    )
-                    last_exc = None
-                    break
-                except TranscriptUnavailable:
-                    raise
-                except Exception as exc:
-                    last_exc = exc
-                    logger.warning("Whisper audio download failed for %s: %s", video_id, exc)
-                    if cookies is None or not _is_retryable_ytdlp_error(exc):
+        if platform in {"instagram", "x"}:
+            duration = _download_external_whisper_audio(
+                yt_dlp,
+                url,
+                tmp_dir,
+                platform=platform,
+                max_minutes=max_minutes,
+            )
+        else:
+            with _copied_cookiefile() as cookiefile:
+                for cookies in _whisper_cookie_attempts(cookiefile):
+                    try:
+                        duration = _download_whisper_audio(
+                            yt_dlp, url, tmp_dir, cookies, max_minutes=max_minutes
+                        )
+                        last_exc = None
                         break
-        if last_exc is not None:
-            raise TranscriptUnavailable(f"could not download audio for Whisper: {last_exc}") from last_exc
+                    except TranscriptUnavailable:
+                        raise
+                    except Exception as exc:
+                        last_exc = exc
+                        logger.warning("Whisper audio download failed for %s: %s", video_id, exc)
+                        if cookies is None or not _is_retryable_ytdlp_error(exc):
+                            break
+            if last_exc is not None:
+                raise TranscriptUnavailable(
+                    f"could not download audio for Whisper: {last_exc}"
+                ) from last_exc
         if duration and duration > max_minutes * 60:
             raise TranscriptUnavailable(
                 f"video is {duration / 60:.0f} minutes, over {max_minutes} minute Whisper cap"

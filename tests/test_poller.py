@@ -24,7 +24,7 @@ def test_process_skips_already_seen(tmp_path: Path, monkeypatch) -> None:
     upsert_seen(video_id="vid1", channel_id="chan1", status="processed")
     called = {"n": 0}
 
-    def fail_if_called(_video_id: str):
+    def fail_if_called(_video_id: str, **_kwargs: object):
         called["n"] += 1
         raise AssertionError("should not fetch transcript for processed videos")
 
@@ -39,7 +39,7 @@ def test_process_retries_error_rows(tmp_path: Path, monkeypatch) -> None:
     upsert_seen(video_id="vid1", channel_id="chan1", status="error")
     called = {"n": 0}
 
-    def no_captions(_video_id: str):
+    def no_captions(_video_id: str, **_kwargs: object):
         called["n"] += 1
         raise TranscriptUnavailable("none")
 
@@ -61,7 +61,7 @@ def test_process_stores_full_transcript_and_long_summary(tmp_path: Path, monkeyp
     _prepare(tmp_path, monkeypatch)
     monkeypatch.setattr(
         "wow_poller.pipeline.get_transcript",
-        lambda _video_id: TranscriptResult(text="Complete transcript text.", source="manual"),
+        lambda _video_id, **_kwargs: TranscriptResult(text="Complete transcript text.", source="manual"),
     )
     summarized: dict = {}
 
@@ -104,7 +104,7 @@ def test_process_fills_missing_description_without_summarizing_it(tmp_path: Path
     _prepare(tmp_path, monkeypatch)
     monkeypatch.setattr(
         "wow_poller.pipeline.get_transcript",
-        lambda _video_id: TranscriptResult(text="Spoken words.", source="manual"),
+        lambda _video_id, **_kwargs: TranscriptResult(text="Spoken words.", source="manual"),
     )
     summarized: dict = {}
 
@@ -152,7 +152,7 @@ def test_process_fills_missing_description_without_summarizing_it(tmp_path: Path
 def test_run_fetch_url_rejects_invalid_url(tmp_path: Path, monkeypatch) -> None:
     _prepare(tmp_path, monkeypatch)
 
-    with pytest.raises(ValueError, match="Invalid YouTube URL"):
+    with pytest.raises(ValueError, match="Paste a YouTube, Instagram Reel, or X post URL"):
         run_fetch_url("not-a-url")
 
 
@@ -330,3 +330,131 @@ def test_run_poll_does_not_count_already_seen_toward_limit(tmp_path: Path, monke
     monkeypatch.setattr("wow_poller.pipeline.write_digest", lambda rows: "digest.md")
     assert run_poll(limit=1, max_age_days=0) == 0
     assert attempted == ["bbbbbbbbbbb"]
+
+
+def _archived_summary() -> dict:
+    return {
+        "summary": "Short summary.",
+        "long_summary": "Detailed summary of the post.",
+        "key_takeaways": ["A concrete point"],
+        "topics": ["economics"],
+        "estimated_relevance": "high",
+    }
+
+
+def test_run_fetch_url_archives_instagram_reel(tmp_path: Path, monkeypatch) -> None:
+    from wow_core.youtube import ResolvedVideoMeta
+
+    _prepare(tmp_path, monkeypatch)
+
+    def fake_resolve(media):
+        assert media.platform == "instagram"
+        assert media.video_id == "ig:DUl354timp1"
+        return ResolvedVideoMeta(
+            channel_id="ig:creator",
+            channel_name="Creator",
+            published_date="2026-10-05T00:00:00+00:00",
+            title="Reel title",
+            description="Caption text",
+        )
+
+    captured: dict = {}
+
+    def fake_transcript(video_id, **kwargs):
+        captured["video_id"] = video_id
+        captured["media_url"] = kwargs.get("media_url")
+        return TranscriptResult(text="spoken words", source="whisper")
+
+    summarized: dict = {}
+
+    def fake_summarize(**kwargs):
+        summarized.update(kwargs)
+        return _archived_summary()
+
+    monkeypatch.setattr("wow_poller.pipeline.resolve_external_metadata", fake_resolve)
+    monkeypatch.setattr("wow_poller.pipeline.get_transcript", fake_transcript)
+    monkeypatch.setattr("wow_poller.pipeline.summarize_video", fake_summarize)
+    monkeypatch.setattr("wow_poller.pipeline.upsert_summary", lambda **_kwargs: None)
+
+    result = run_fetch_url("https://www.instagram.com/reel/DUl354timp1/?igsh=1")
+
+    assert result["video_id"] == "ig:DUl354timp1"
+    assert result["outcome"] == "processed"
+    stored = get_video("ig:DUl354timp1")
+    assert stored is not None
+    assert stored["channel_id"] == "ig:creator"
+    assert stored["description"] == "Caption text"
+    assert stored["transcript"] == "spoken words"
+    assert stored["url"] == "https://www.instagram.com/reel/DUl354timp1/"
+    assert captured == {
+        "video_id": "ig:DUl354timp1",
+        "media_url": "https://www.instagram.com/reel/DUl354timp1/",
+    }
+    assert summarized["transcript"] == "Post text:\nCaption text\n\nSpoken transcript:\nspoken words"
+    assert {row["channel_id"] for row in list_channels()} >= {"chan1", "ig:creator"}
+
+
+def test_run_fetch_url_archives_x_post(tmp_path: Path, monkeypatch) -> None:
+    from wow_core.youtube import ResolvedVideoMeta
+
+    _prepare(tmp_path, monkeypatch)
+
+    def fake_resolve(media):
+        assert media.platform == "x"
+        return ResolvedVideoMeta(
+            channel_id="x:kobaHUB",
+            channel_name="koba",
+            published_date="2026-10-05T00:00:00+00:00",
+            title="Clip",
+            description="Jack Ma told Elon Musk.",
+        )
+
+    monkeypatch.setattr("wow_poller.pipeline.resolve_external_metadata", fake_resolve)
+    monkeypatch.setattr(
+        "wow_poller.pipeline.get_transcript",
+        lambda video_id, **_kwargs: TranscriptResult(text="spoken debate", source="whisper"),
+    )
+    summarized: dict = {}
+
+    def fake_summarize(**kwargs):
+        summarized.update(kwargs)
+        return _archived_summary()
+
+    monkeypatch.setattr("wow_poller.pipeline.summarize_video", fake_summarize)
+    monkeypatch.setattr("wow_poller.pipeline.upsert_summary", lambda **_kwargs: None)
+
+    result = run_fetch_url("https://x.com/kobaHUB/status/2107026299776532653")
+
+    assert result["outcome"] == "processed"
+    stored = get_video("x:2107026299776532653")
+    assert stored is not None
+    assert stored["channel_id"] == "x:kobaHUB"
+    assert stored["description"] == "Jack Ma told Elon Musk."
+    assert stored["transcript"] == "spoken debate"
+    assert stored["url"] == "https://x.com/i/status/2107026299776532653"
+    assert "Post text:\nJack Ma told Elon Musk." in summarized["transcript"]
+    assert "Spoken transcript:\nspoken debate" in summarized["transcript"]
+
+
+def test_run_poll_skips_external_accounts(tmp_path: Path, monkeypatch) -> None:
+    _prepare(tmp_path, monkeypatch)
+    sync_channels(
+        [
+            {"channel_id": "ig:creator", "channel_name": "Creator"},
+            {"channel_id": "x:kobaHUB", "channel_name": "koba"},
+        ]
+    )
+    monkeypatch.setattr(
+        "wow_poller.pipeline.load_channels",
+        lambda: [{"channel_id": "chan1", "channel_name": "Demo"}],
+    )
+    feeds: list[str] = []
+
+    def fake_feed(channel_id, rss_url):
+        feeds.append(channel_id)
+        return []
+
+    monkeypatch.setattr("wow_poller.pipeline.fetch_channel_feed", fake_feed)
+    monkeypatch.setattr("wow_poller.pipeline.write_digest", lambda rows: "digest.md")
+    assert run_poll(limit=10, max_age_days=0) == 0
+    assert feeds == ["chan1"]

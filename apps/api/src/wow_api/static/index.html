@@ -400,7 +400,7 @@
         </svg>
       </button>
       <span class="nav-sep" aria-hidden="true">|</span>
-      <input type="url" id="fetch-url-input" placeholder="YouTube URL" aria-label="YouTube URL" />
+      <input type="url" id="fetch-url-input" placeholder="YouTube, Reel, or X URL" aria-label="YouTube, Reel, or X URL" />
       <button type="button" id="fetch-url-now" class="icon" title="Fetch Now" aria-label="Fetch Now">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M12 3v12"/>
@@ -1139,7 +1139,7 @@
       if ($("fetch-url-now").disabled) return;
       const url = $("fetch-url-input").value.trim();
       if (!url) {
-        $("fetch-status").textContent = "Enter a YouTube URL";
+        $("fetch-status").textContent = "Enter a YouTube, Instagram Reel, or X post URL";
         return;
       }
       runFetch(

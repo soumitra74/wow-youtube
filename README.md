@@ -16,7 +16,7 @@ docker compose up --build
 
 UI: http://localhost:8000
 
-Inbox sync (refresh icon) and **Fetch Now** for a YouTube URL share one background job—starting either while the other is running is rejected (HTTP 409); wait for the current run to finish, then retry the URL import if needed.
+Inbox sync (refresh icon) and **Fetch Now** share one background job. Fetch Now accepts a YouTube URL, a public Instagram Reel (`/reel/`, `/reels/`, or `/p/`), or a public X video post (`x.com` or `twitter.com` status URL). Private, sensitive, and login-walled posts are rejected. Starting either job while the other is running is rejected (HTTP 409); wait for the current run to finish, then retry the URL import if needed.
 
 During inbox scan, yt-dlp may log **Video unavailable** for old notification rows (deleted or non-video items); those are skipped. The UI status line should keep updating through scan → process; if it sits on one message for minutes, refresh cookies or lower `YOUTUBE_NOTIFICATIONS_SCAN_LIMIT`.
 
